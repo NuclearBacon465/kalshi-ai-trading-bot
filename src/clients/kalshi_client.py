@@ -413,7 +413,8 @@ class KalshiClient(TradingLoggerMixin):
                 if "buy_max_cost" not in order_data:
                     order_data["buy_max_cost"] = count_int * 99
 
-                order_data.setdefault("time_in_force", "fill_or_kill")
+                # Use 'good_til_canceled' instead of 'fill_or_kill' to allow partial fills
+                order_data.setdefault("time_in_force", "good_til_canceled")
 
         # DEBUG: Log the exact order data being sent
         self.logger.info(f"📤 Sending order to Kalshi API: {order_data}")
