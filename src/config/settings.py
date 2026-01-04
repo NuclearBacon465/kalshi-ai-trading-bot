@@ -75,7 +75,7 @@ class TradingConfig:
 
     # AI trading criteria - MORE PERMISSIVE
     max_analysis_cost_per_decision: float = 0.15  # INCREASED: Allow higher cost per decision (was 0.10, now 0.15)
-    min_confidence_threshold: float = 0.45  # DECREASED: Lower confidence threshold (was 0.55, now 0.45)
+    min_confidence_threshold: float = 0.35  # DECREASED: Lower confidence threshold (was 0.45, now 0.35 for more trades)
 
     # Cost control and market analysis frequency - MORE PERMISSIVE
     daily_ai_budget: float = 20.0  # INCREASED: Higher daily budget (was 5.0, now 10.0)
@@ -89,7 +89,7 @@ class TradingConfig:
     sleep_when_limit_reached: bool = True  # Sleep until next day when limit reached
 
     # Enhanced market filtering to reduce analyses - MORE PERMISSIVE
-    min_volume_for_ai_analysis: float = 50.0  # DECREASED: Much lower threshold (was 500, now 200)
+    min_volume_for_ai_analysis: float = 25.0  # DECREASED: Much lower threshold (was 50, now 25 for more opportunities)
     exclude_low_liquidity_categories: List[str] = field(default_factory=lambda: [
         # REMOVED weather and entertainment - trade all categories
     ])
@@ -154,8 +154,8 @@ max_sector_exposure: float = 0.90       # Very high sector concentration (90%)
 # System performance objectives - MORE AGGRESSIVE FOR MORE TRADES
 target_sharpe: float = 0.3              # DECREASED: Lower Sharpe requirement (was 0.5, now 0.3)
 target_return: float = 0.15             # INCREASED: Higher return target (was 0.10, now 0.15)
-min_trade_edge: float = 0.08           # DECREASED: Lower edge requirement (was 0.15, now 8%)
-min_confidence_for_large_size: float = 0.50  # DECREASED: Lower confidence requirement (was 0.65, now 50%)
+min_trade_edge: float = 0.05           # DECREASED: Lower edge requirement (was 0.08, now 5% for more trades)
+min_confidence_for_large_size: float = 0.40  # DECREASED: Lower confidence requirement (was 0.50, now 40%)
 
 # === DYNAMIC EXIT STRATEGIES ===
 # Enhanced exit strategy settings - MORE AGGRESSIVE
@@ -169,7 +169,7 @@ volatility_adjustment: bool = True      # Adjust exits based on volatility
 # === MARKET MAKING STRATEGY ===
 # Settings for limit order market making - MORE AGGRESSIVE
 enable_market_making: bool = True       # Enable market making strategy
-min_spread_for_making: float = 0.01     # DECREASED: Accept smaller spreads (was 0.02, now 1¢)
+min_spread_for_making: float = 0.005    # DECREASED: Accept smaller spreads (was 0.01, now 0.5¢ for more opportunities)
 max_inventory_risk: float = 0.15        # INCREASED: Allow higher inventory risk (was 0.10, now 15%)
 order_refresh_minutes: int = 15         # Refresh orders every 15 minutes
 max_orders_per_market: int = 4          # Maximum orders per market (2 each side)
@@ -177,8 +177,8 @@ max_orders_per_market: int = 4          # Maximum orders per market (2 each side
 # === MARKET SELECTION (ENHANCED FOR MORE OPPORTUNITIES) ===
 # Removed time restrictions - trade ANY deadline with dynamic exits!
 # max_time_to_expiry_days: REMOVED      # No longer used - trade any timeline!
-min_volume_for_analysis: float = 200.0  # DECREASED: Much lower minimum volume (was 1000, now 200)
-min_volume_for_market_making: float = 500.0  # DECREASED: Lower volume for market making (was 2000, now 500)
+min_volume_for_analysis: float = 100.0  # DECREASED: Much lower minimum volume (was 200, now 100 for more opportunities)
+min_volume_for_market_making: float = 250.0  # DECREASED: Lower volume for market making (was 500, now 250)
 min_price_movement: float = 0.02        # DECREASED: Lower minimum range (was 0.05, now 2¢)
 max_bid_ask_spread: float = 0.15        # INCREASED: Allow wider spreads (was 0.10, now 15¢)
 min_confidence_long_term: float = 0.45  # DECREASED: Lower confidence for distant expiries (was 0.65, now 45%)

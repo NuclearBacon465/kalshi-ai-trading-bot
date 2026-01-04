@@ -12,6 +12,9 @@ from datetime import datetime, timezone, timedelta
 import pickle
 import os
 
+# Configure gRPC to use system CA bundle for TLS inspection environments
+os.environ['GRPC_DEFAULT_SSL_ROOTS_FILE_PATH'] = '/etc/ssl/certs/ca-certificates.crt'
+
 import re
 from json_repair import repair_json
 
@@ -62,7 +65,11 @@ class XAIClient(TradingLoggerMixin):
         self.db_manager = db_manager
         
         # Initialize xAI async client with proper timeout for reasoning models
-        self.client = AsyncClient(api_key=self.api_key, timeout=3600.0)  # 3600s as recommended by xAI docs
+        # Updated certifi package should handle SSL certificates properly
+        self.client = AsyncClient(
+            api_key=self.api_key,
+            timeout=3600.0  # 3600s as recommended by xAI docs
+        )
         
         # Model configuration
         self.primary_model = settings.trading.primary_model
