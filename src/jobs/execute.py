@@ -198,6 +198,9 @@ async def place_profit_taking_orders(
                     if profit_pct >= profit_threshold:
                         # Calculate sell limit price (slightly below current to ensure execution)
                         sell_price = current_price * 0.98  # 2% below current price for quick execution
+
+                        # ⚠️ CRITICAL FIX: Ensure price is valid (minimum 1¢, maximum 99¢)
+                        sell_price = max(0.01, min(0.99, sell_price))  # Clamp between 1¢ and 99¢
                         
                         logger.info(f"💰 PROFIT TARGET HIT: {position.market_id} - {profit_pct:.1%} profit (${unrealized_pnl:.2f})")
                         
@@ -282,9 +285,12 @@ async def place_stop_loss_orders(
                     
                     # Check if we need stop-loss protection
                     if loss_pct <= stop_loss_threshold:  # Negative loss percentage
-                        # Calculate stop-loss sell price
+                        # Calculate stop-loss sell price with safety bounds
+                        # For a -10% stop loss, we want to sell at 90% * 0.9 = 81% of entry
                         stop_price = position.entry_price * (1 + stop_loss_threshold * 1.1)  # Slightly more aggressive
-                        stop_price = max(0.01, stop_price)  # Ensure price is at least 1¢
+
+                        # ⚠️ CRITICAL FIX: Ensure price is valid (minimum 1¢, maximum 99¢)
+                        stop_price = max(0.01, min(0.99, stop_price))  # Clamp between 1¢ and 99¢
                         
                         logger.info(f"🛡️ STOP LOSS TRIGGERED: {position.market_id} - {loss_pct:.1%} loss (${unrealized_pnl:.2f})")
                         

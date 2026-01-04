@@ -380,7 +380,7 @@ class KalshiClient(TradingLoggerMixin):
             order_data["expiration_ts"] = expiration_ts
         
         # --- Sanitize + enforce Kalshi API requirements ---
-        # Kalshi expects count as an integer >= 1 (NOT 1.0)
+        # 1. Validate and convert count to integer
         try:
             count_int = int(order_data["count"])
         except Exception:
@@ -390,31 +390,68 @@ class KalshiClient(TradingLoggerMixin):
         order_data["count"] = count_int
 
         order_type = order_data["type"]
-        side_l = order_data["side"]
-        action_l = order_data["action"]
+        side_l = order_data["side"].lower()
+        action_l = order_data["action"].lower()
 
-        # For LIMIT orders, Kalshi requires the side-specific price field
+        # 2. Validate side and action values
+        if side_l not in ["yes", "no"]:
+            raise ValueError(f"Invalid side: {side_l}. Must be 'yes' or 'no'")
+        if action_l not in ["buy", "sell"]:
+            raise ValueError(f"Invalid action: {action_l}. Must be 'buy' or 'sell'")
+        if order_type not in ["market", "limit"]:
+            raise ValueError(f"Invalid order type: {order_type}. Must be 'market' or 'limit'")
+
+        # Ensure side and action are lowercase for Kalshi API
+        order_data["side"] = side_l
+        order_data["action"] = action_l
+
+        # 3. Validate prices if provided (must be 1-99 cents)
+        def validate_price(price: int, price_name: str) -> int:
+            if not isinstance(price, int):
+                raise ValueError(f"{price_name} must be an integer (cents)")
+            if price < 1 or price > 99:
+                raise ValueError(f"{price_name} must be between 1-99 cents (got {price})")
+            return price
+
+        if "yes_price" in order_data and order_data["yes_price"] is not None:
+            order_data["yes_price"] = validate_price(order_data["yes_price"], "yes_price")
+        if "no_price" in order_data and order_data["no_price"] is not None:
+            order_data["no_price"] = validate_price(order_data["no_price"], "no_price")
+
+        # 4. Handle LIMIT orders
         if order_type == "limit":
             if side_l == "yes" and "yes_price" not in order_data:
                 raise ValueError("Limit YES orders require yes_price")
             if side_l == "no" and "no_price" not in order_data:
                 raise ValueError("Limit NO orders require no_price")
 
-        # For MARKET orders, Kalshi requires a price field (the max you're willing to pay)
+        # 5. Handle MARKET orders (both BUY and SELL!)
         if order_type == "market":
             if action_l == "buy":
-                # For market buy orders, set the side-specific price to max (99¢)
+                # For market BUY orders, set the side-specific price to max (99¢)
                 if side_l == "yes" and "yes_price" not in order_data:
                     order_data["yes_price"] = 99  # Max willing to pay for YES
                 elif side_l == "no" and "no_price" not in order_data:
                     order_data["no_price"] = 99  # Max willing to pay for NO
 
-                # Also set buy_max_cost for additional safety
+                # Set buy_max_cost for additional safety
                 if "buy_max_cost" not in order_data:
                     order_data["buy_max_cost"] = count_int * 99
 
-                # Use 'good_til_canceled' instead of 'fill_or_kill' to allow partial fills
-                order_data.setdefault("time_in_force", "good_til_canceled")
+            elif action_l == "sell":
+                # ⚠️ CRITICAL FIX: Market SELL orders also need prices!
+                # For market SELL orders, set the side-specific price to min (1¢) to sell fast
+                if side_l == "yes" and "yes_price" not in order_data:
+                    order_data["yes_price"] = 1  # Min willing to accept for YES
+                elif side_l == "no" and "no_price" not in order_data:
+                    order_data["no_price"] = 1  # Min willing to accept for NO
+
+                # Set sell_position_floor to ensure we don't sell below 1¢
+                if "sell_position_floor" not in order_data:
+                    order_data["sell_position_floor"] = count_int * 1
+
+            # Use 'good_til_canceled' instead of 'fill_or_kill' to allow waiting for liquidity
+            order_data.setdefault("time_in_force", "good_til_canceled")
 
         # DEBUG: Log the exact order data being sent
         self.logger.info(f"📤 Sending order to Kalshi API: {order_data}")
