@@ -380,4 +380,4 @@ if __name__ == '__main__':
     print("=" * 80)
     print()
 
-    app.run(host='0.0.0.0', port=8080, debug=False)
+    app.run(host='0.0.0.0', port=5000, debug=False)
