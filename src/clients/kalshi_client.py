@@ -400,17 +400,20 @@ class KalshiClient(TradingLoggerMixin):
             if side_l == "no" and "no_price" not in order_data:
                 raise ValueError("Limit NO orders require no_price")
 
-        # For MARKET buys, cap max cost (prevents invalid_order / runaway slippage)
-        if order_type == "market" and action_l == "buy":
-            if "buy_max_cost" not in order_data:
-                # worst-case is 99¢ per contract
-                order_data["buy_max_cost"] = count_int * 99
-            order_data.setdefault("time_in_force", "fill_or_kill")
-
-        # If market order, ensure we don't accidentally send limit fields
+        # For MARKET orders, Kalshi requires a price field (the max you're willing to pay)
         if order_type == "market":
-            order_data.pop("yes_price", None)
-            order_data.pop("no_price", None)
+            if action_l == "buy":
+                # For market buy orders, set the side-specific price to max (99¢)
+                if side_l == "yes" and "yes_price" not in order_data:
+                    order_data["yes_price"] = 99  # Max willing to pay for YES
+                elif side_l == "no" and "no_price" not in order_data:
+                    order_data["no_price"] = 99  # Max willing to pay for NO
+
+                # Also set buy_max_cost for additional safety
+                if "buy_max_cost" not in order_data:
+                    order_data["buy_max_cost"] = count_int * 99
+
+                order_data.setdefault("time_in_force", "fill_or_kill")
 
         # DEBUG: Log the exact order data being sent
         self.logger.info(f"📤 Sending order to Kalshi API: {order_data}")
