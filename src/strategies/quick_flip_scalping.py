@@ -188,7 +188,7 @@ class QuickFlipScalpingStrategy:
         expected_profit = quantity * ((movement_analysis['target_price'] - current_price) / 100)
         
         return QuickFlipOpportunity(
-                            market_id=market.market_id,
+            market_id=market.market_id,
             market_title=market.title,
             side=side,
             entry_price=current_price,
@@ -257,12 +257,12 @@ REASON: [brief explanation]
                 if 'TARGET_PRICE:' in line:
                     try:
                         target_price = float(line.split(':')[1].strip())
-                    except:
+                    except (ValueError, IndexError):
                         pass
                 elif 'CONFIDENCE:' in line:
                     try:
                         confidence = float(line.split(':')[1].strip())
-                    except:
+                    except (ValueError, IndexError):
                         pass
                 elif 'REASON:' in line:
                     reason = line.split(':', 1)[1].strip()
