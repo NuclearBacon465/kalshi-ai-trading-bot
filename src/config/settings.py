@@ -37,8 +37,8 @@ class TradingConfig:
     min_volume: float = 50.0            # DECREASED: Much lower volume requirement (was 500, now 200)
     max_time_to_expiry_days: int = 30    # INCREASED: Allow longer timeframes (was 14, now 30)
     
-    # AI decision making - MORE AGGRESSIVE THRESHOLDS
-    min_confidence_to_trade: float = 0.40   # DECREASED: Lower confidence barrier (was 0.65, now 0.50)
+    # AI decision making - HIGH-QUALITY TRADES ONLY
+    min_confidence_to_trade: float = 0.60   # INCREASED: Only trade high-confidence opportunities (60%+)
     scan_interval_seconds: int = 10      # DECREASED: Scan more frequently (was 60, now 30)
     
     # AI model configuration
@@ -51,10 +51,10 @@ class TradingConfig:
     default_position_size: float = 3.0  # REDUCED: Now using Kelly Criterion as primary method (was 5%, now 3%)
     position_size_multiplier: float = 1.0  # Multiplier for AI confidence
     
-    # Kelly Criterion settings (PRIMARY position sizing method) - MORE AGGRESSIVE
+    # Kelly Criterion settings (PRIMARY position sizing method) - BALANCED FOR OPTIMAL GROWTH
     use_kelly_criterion: bool = True        # Use Kelly Criterion for position sizing (PRIMARY METHOD)
-    kelly_fraction: float = 1.0            # INCREASED: More aggressive Kelly multiplier (was 0.5, now 0.75)
-    max_single_position: float = 0.50       # INCREASED: Higher position cap (was 0.03, now 5%)
+    kelly_fraction: float = 0.50            # OPTIMIZED: Half-Kelly for optimal risk-adjusted growth
+    max_single_position: float = 0.25       # BALANCED: 25% max position size for risk management
     
     # Trading frequency - MORE FREQUENT
     market_scan_interval: int = 15          # DECREASED: Scan every 30 seconds (was 60)
@@ -73,9 +73,9 @@ class TradingConfig:
     high_confidence_market_odds: float = 0.90 # Market price to look for
     high_confidence_expiry_hours: int = 24   # Max hours until expiry
 
-    # AI trading criteria - MORE PERMISSIVE
+    # AI trading criteria - HIGH-QUALITY ONLY
     max_analysis_cost_per_decision: float = 0.15  # INCREASED: Allow higher cost per decision (was 0.10, now 0.15)
-    min_confidence_threshold: float = 0.35  # DECREASED: Lower confidence threshold (was 0.45, now 0.35 for more trades)
+    min_confidence_threshold: float = 0.60  # INCREASED: High-quality trades only (60%+ confidence)
 
     # Cost control and market analysis frequency - MORE PERMISSIVE
     daily_ai_budget: float = 20.0  # INCREASED: Higher daily budget (was 5.0, now 10.0)
