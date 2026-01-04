@@ -188,27 +188,28 @@ class BeastModeBot:
                     continue
                 
                 cycle_count += 1
-                self.logger.info(f"🔄 Starting Beast Mode Trading Cycle #{cycle_count}")
+                # Only log every 30 cycles (60 seconds worth) to avoid spam in high-frequency mode
+                if cycle_count % 30 == 1:
+                    self.logger.info(f"⚡ Beast Mode HIGH-FREQUENCY Cycle #{cycle_count} (2s intervals)")
                 
                 # Run the Beast Mode unified trading system
                 results = await run_trading_job()
                 
                 if results and results.total_positions > 0:
                     self.logger.info(
-                        f"✅ Cycle #{cycle_count} Complete - "
+                        f"✅ HFT Cycle #{cycle_count} Complete - "
                         f"Positions: {results.total_positions}, "
                         f"Capital Used: ${results.total_capital_used:.0f} ({results.capital_efficiency:.1%}), "
                         f"Expected Return: {results.expected_annual_return:.1%}"
                     )
-                else:
-                    self.logger.info(f"📊 Cycle #{cycle_count} Complete - No new positions created")
+                # Don't log "no positions" every 2 seconds - too spammy
                 
-                # Wait for next cycle (60 seconds)
-                await asyncio.sleep(60)
-                
+                # ⚡ HIGH-FREQUENCY MODE: Wait for next cycle (2 seconds for rapid monitoring and 0.1s precision)
+                await asyncio.sleep(2)
+
             except Exception as e:
                 self.logger.error(f"Error in trading cycle #{cycle_count}: {e}")
-                await asyncio.sleep(60)
+                await asyncio.sleep(2)  # Quick recovery for high-frequency trading
 
     async def _check_daily_ai_limits(self, xai_client: XAIClient) -> bool:
         """
@@ -270,7 +271,7 @@ class BeastModeBot:
             try:
                 # ✅ FIXED: Pass the shared database manager
                 await run_tracking(db_manager)
-                await asyncio.sleep(120)  # Check positions every 2 minutes (slower to reduce API load)
+                await asyncio.sleep(5)  # ⚡ HIGH-FREQUENCY: Check positions every 5 seconds for rapid exits
             except Exception as e:
                 self.logger.error(f"Error in position tracking: {e}")
                 await asyncio.sleep(30)
