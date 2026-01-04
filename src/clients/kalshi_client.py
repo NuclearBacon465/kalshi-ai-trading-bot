@@ -379,6 +379,39 @@ class KalshiClient(TradingLoggerMixin):
         if expiration_ts:
             order_data["expiration_ts"] = expiration_ts
         
+        # --- Sanitize + enforce Kalshi API requirements ---
+        # Kalshi expects count as an integer >= 1 (NOT 1.0)
+        try:
+            count_int = int(order_data["count"])
+        except Exception:
+            raise ValueError(f"Invalid count for order: {order_data['count']}")
+        if count_int < 1:
+            raise ValueError(f"Order count must be >= 1 (got {count_int})")
+        order_data["count"] = count_int
+
+        order_type = order_data["type"]
+        side_l = order_data["side"]
+        action_l = order_data["action"]
+
+        # For LIMIT orders, Kalshi requires the side-specific price field
+        if order_type == "limit":
+            if side_l == "yes" and "yes_price" not in order_data:
+                raise ValueError("Limit YES orders require yes_price")
+            if side_l == "no" and "no_price" not in order_data:
+                raise ValueError("Limit NO orders require no_price")
+
+        # For MARKET buys, cap max cost (prevents invalid_order / runaway slippage)
+        if order_type == "market" and action_l == "buy":
+            if "buy_max_cost" not in order_data:
+                # worst-case is 99¢ per contract
+                order_data["buy_max_cost"] = count_int * 99
+            order_data.setdefault("time_in_force", "fill_or_kill")
+
+        # If market order, ensure we don't accidentally send limit fields
+        if order_type == "market":
+            order_data.pop("yes_price", None)
+            order_data.pop("no_price", None)
+        
         return await self._make_authenticated_request(
             "POST", "/trade-api/v2/portfolio/orders", json_data=order_data
         )
@@ -427,4 +460,4 @@ class KalshiClient(TradingLoggerMixin):
     
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit."""
-        await self.close() 
+        await self.close()

@@ -57,7 +57,8 @@ async def execute_position(
             return True
 
         except KalshiAPIError as e:
-            logger.error(f"Failed to place LIVE order for {position.market_id}: {e}")
+            logger.error(f"Failed to place LIVE order: {e}")
+            await db_manager.update_position_status(position.id, "voided")  # order failed; don't count as open exposure
             return False
     else:
         # Simulate the trade

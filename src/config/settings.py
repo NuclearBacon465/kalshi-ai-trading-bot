@@ -27,18 +27,19 @@ class APIConfig:
 class TradingConfig:
     """Trading strategy configuration."""
     # Position sizing and risk management - MADE MORE AGGRESSIVE  
-    max_position_size_pct: float = 5.0  # INCREASED: Back to 5% per position (was 3%)
-    max_daily_loss_pct: float = 15.0    # INCREASED: Allow 15% daily loss (was 10%) 
-    max_positions: int = 15              # INCREASED: Allow 15 concurrent positions (was 10)
-    min_balance: float = 50.0           # REDUCED: Lower minimum to trade more (was 100)
+    max_position_size_pct: float = 50.0  # INCREASED: Back to 5% per position (was 3%)
+    max_portfolio_exposure_pct: float = 90.0  # allow up to 90% deployed across open positions
+    max_daily_loss_pct: float = 50.0    # INCREASED: Allow 15% daily loss (was 10%) 
+    max_positions: int = 30              # INCREASED: Allow 15 concurrent positions (was 10)
+    min_balance: float = 0.0           # REDUCED: Lower minimum to trade more (was 100)
     
     # Market filtering criteria - MUCH MORE PERMISSIVE
-    min_volume: float = 200.0            # DECREASED: Much lower volume requirement (was 500, now 200)
+    min_volume: float = 50.0            # DECREASED: Much lower volume requirement (was 500, now 200)
     max_time_to_expiry_days: int = 30    # INCREASED: Allow longer timeframes (was 14, now 30)
     
     # AI decision making - MORE AGGRESSIVE THRESHOLDS
-    min_confidence_to_trade: float = 0.50   # DECREASED: Lower confidence barrier (was 0.65, now 0.50)
-    scan_interval_seconds: int = 30      # DECREASED: Scan more frequently (was 60, now 30)
+    min_confidence_to_trade: float = 0.40   # DECREASED: Lower confidence barrier (was 0.65, now 0.50)
+    scan_interval_seconds: int = 10      # DECREASED: Scan more frequently (was 60, now 30)
     
     # AI model configuration
     primary_model: str = "grok-4" # DO NOT CHANGE THIS UNDER ANY CIRCUMSTANCES
@@ -52,15 +53,15 @@ class TradingConfig:
     
     # Kelly Criterion settings (PRIMARY position sizing method) - MORE AGGRESSIVE
     use_kelly_criterion: bool = True        # Use Kelly Criterion for position sizing (PRIMARY METHOD)
-    kelly_fraction: float = 0.75            # INCREASED: More aggressive Kelly multiplier (was 0.5, now 0.75)
-    max_single_position: float = 0.05       # INCREASED: Higher position cap (was 0.03, now 5%)
+    kelly_fraction: float = 1.0            # INCREASED: More aggressive Kelly multiplier (was 0.5, now 0.75)
+    max_single_position: float = 0.50       # INCREASED: Higher position cap (was 0.03, now 5%)
     
     # Trading frequency - MORE FREQUENT
-    market_scan_interval: int = 30          # DECREASED: Scan every 30 seconds (was 60)
-    position_check_interval: int = 15       # DECREASED: Check positions every 15 seconds (was 30)
-    max_trades_per_hour: int = 20           # INCREASED: Allow more trades per hour (was 10, now 20)
-    run_interval_minutes: int = 10          # DECREASED: Run more frequently (was 15, now 10)
-    num_processor_workers: int = 5      # Number of concurrent market processor workers
+    market_scan_interval: int = 15          # DECREASED: Scan every 30 seconds (was 60)
+    position_check_interval: int = 10       # DECREASED: Check positions every 15 seconds (was 30)
+    max_trades_per_hour: int = 60           # INCREASED: Allow more trades per hour (was 10, now 20)
+    run_interval_minutes: int = 5          # DECREASED: Run more frequently (was 15, now 10)
+    num_processor_workers: int = 8      # Number of concurrent market processor workers
     
     # Market selection preferences
     preferred_categories: List[str] = field(default_factory=lambda: [])
@@ -77,10 +78,10 @@ class TradingConfig:
     min_confidence_threshold: float = 0.45  # DECREASED: Lower confidence threshold (was 0.55, now 0.45)
 
     # Cost control and market analysis frequency - MORE PERMISSIVE
-    daily_ai_budget: float = 10.0  # INCREASED: Higher daily budget (was 5.0, now 10.0)
-    max_ai_cost_per_decision: float = 0.08  # INCREASED: Higher per-decision cost (was 0.05, now 0.08)
-    analysis_cooldown_hours: int = 3  # DECREASED: Shorter cooldown (was 6, now 3)
-    max_analyses_per_market_per_day: int = 4  # INCREASED: More analyses per day (was 2, now 4)
+    daily_ai_budget: float = 20.0  # INCREASED: Higher daily budget (was 5.0, now 10.0)
+    max_ai_cost_per_decision: float = 0.15  # INCREASED: Higher per-decision cost (was 0.05, now 0.08)
+    analysis_cooldown_hours: int = 1  # DECREASED: Shorter cooldown (was 6, now 3)
+    max_analyses_per_market_per_day: int = 10  # INCREASED: More analyses per day (was 2, now 4)
     
     # Daily AI spending limits - SAFETY CONTROLS
     daily_ai_cost_limit: float = 50.0  # Maximum daily spending on AI API calls (USD)
@@ -88,10 +89,29 @@ class TradingConfig:
     sleep_when_limit_reached: bool = True  # Sleep until next day when limit reached
 
     # Enhanced market filtering to reduce analyses - MORE PERMISSIVE
-    min_volume_for_ai_analysis: float = 200.0  # DECREASED: Much lower threshold (was 500, now 200)
+    min_volume_for_ai_analysis: float = 50.0  # DECREASED: Much lower threshold (was 500, now 200)
     exclude_low_liquidity_categories: List[str] = field(default_factory=lambda: [
         # REMOVED weather and entertainment - trade all categories
     ])
+
+    # === EXECUTION MODES (strategies read these) ===
+    live_trading_enabled: bool = True      # MUST be True to actually send orders
+    paper_trading_mode: bool = False      # True = simulate only
+    
+    # === PORTFOLIO / STRATEGY SETTINGS (code references settings.trading.*) ===
+    total_capital: Optional[float] = None  # None = use live Kalshi balance
+    use_risk_parity: bool = True
+
+    min_position_size: float = 2.0         # allow tiny test trades
+    max_position_size: float = 1000.0      # high cap; % caps usually bind first
+
+    max_concurrent_markets: int = 50
+    ev_threshold: float = 0.01             # lower = more trades
+
+    skip_news_for_low_volume: bool = True
+    news_search_volume_threshold: float = 200.0
+
+    target_sharpe: float = 0.10
 
 
 @dataclass
@@ -115,7 +135,7 @@ market_making_allocation: float = 0.40  # 40% for market making (spread profits)
 directional_allocation: float = 0.50    # 50% for directional trading (AI predictions) 
 arbitrage_allocation: float = 0.10      # 10% for arbitrage opportunities
 
-  # === PORTFOLIO OPTIMIZATION SETTINGS ===
+# === PORTFOLIO OPTIMIZATION SETTINGS ===
 # Kelly Criterion is now the PRIMARY position sizing method (moved to TradingConfig)
 # total_capital: DYNAMICALLY FETCHED from Kalshi balance - never hardcoded!
 use_risk_parity: bool = True            # Equal risk allocation vs equal capital
@@ -222,4 +242,4 @@ try:
     settings.validate()
 except ValueError as e:
     print(f"Configuration validation error: {e}")
-    print("Please check your environment variables and configuration.") 
+    print("Please check your environment variables and configuration.")

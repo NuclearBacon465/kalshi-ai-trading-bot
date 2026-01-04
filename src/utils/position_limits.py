@@ -62,14 +62,14 @@ class PositionLimitsManager:
         self.kalshi_client = kalshi_client
         self.logger = get_trading_logger("position_limits")
         
-        # INCREASED: More aggressive limits for more opportunities
-        self.max_positions = 15  # INCREASED: Allow 15 positions (was 10)
-        self.max_position_size_pct = 5.0  # INCREASED: 5% max per trade (was 3%)
-        self.warning_threshold = self.max_positions - 3  # Warning at 12 positions
+        self.max_positions = settings.trading.max_positions
+        self.max_position_size_pct = settings.trading.max_position_size_pct
+        self.max_portfolio_exposure_pct = getattr(settings.trading, "max_portfolio_exposure_pct", 90.0)
         
-        # Additional safety limits - MORE AGGRESSIVE FOR FULL PORTFOLIO USE
-        self.emergency_position_limit = 20  # INCREASED: Higher emergency threshold (was 15)
-        self.min_cash_reserve_pct = 0.5  # DECREASED: Only 0.5% cash reserves (was 1% - nearly full deployment)
+        self.warning_threshold = max(0, self.max_positions - 3)
+        self.emergency_position_limit = max(self.max_positions + 5, int(self.max_positions * 1.5))
+        
+        self.min_cash_reserve_pct = 0.0  # High-risk test mode: allow full deployment
         
     async def check_position_limits(
         self,
@@ -423,4 +423,4 @@ async def get_max_position_size(
     """Get maximum allowed position size."""
     manager = PositionLimitsManager(db_manager, kalshi_client)
     portfolio_value = await manager._get_portfolio_value()
-    return portfolio_value * (manager.max_position_size_pct / 100) 
+    return portfolio_value * (manager.max_position_size_pct / 100)
