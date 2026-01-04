@@ -411,7 +411,10 @@ class KalshiClient(TradingLoggerMixin):
         if order_type == "market":
             order_data.pop("yes_price", None)
             order_data.pop("no_price", None)
-        
+
+        # DEBUG: Log the exact order data being sent
+        self.logger.info(f"📤 Sending order to Kalshi API: {order_data}")
+
         return await self._make_authenticated_request(
             "POST", "/trade-api/v2/portfolio/orders", json_data=order_data
         )
