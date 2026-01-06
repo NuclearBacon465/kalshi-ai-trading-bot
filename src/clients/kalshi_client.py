@@ -450,8 +450,9 @@ class KalshiClient(TradingLoggerMixin):
                 if "sell_position_floor" not in order_data:
                     order_data["sell_position_floor"] = count_int * 1
 
-            # Use 'good_til_canceled' instead of 'fill_or_kill' to allow waiting for liquidity
-            order_data.setdefault("time_in_force", "good_til_canceled")
+        # 🔧 CRITICAL FIX: ALL orders require time_in_force (use Kalshi's abbreviation "gtc")
+        if "time_in_force" not in order_data:
+            order_data["time_in_force"] = "gtc"  # good-til-canceled
 
         # DEBUG: Log the exact order data being sent
         self.logger.info(f"📤 Sending order to Kalshi API: {order_data}")
