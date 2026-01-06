@@ -78,13 +78,13 @@ class TradingConfig:
     min_confidence_threshold: float = 0.50  # AGGRESSIVE: Take more trades at 50%+ confidence
 
     # Cost control and market analysis frequency - MORE PERMISSIVE
-    daily_ai_budget: float = 20.0  # INCREASED: Higher daily budget (was 5.0, now 10.0)
-    max_ai_cost_per_decision: float = 0.15  # INCREASED: Higher per-decision cost (was 0.05, now 0.08)
+    daily_ai_budget: float = 100.0  # ⚡ OPTIMIZED: 5x increase for maximum opportunity detection (was 20.0, now 100.0)
+    max_ai_cost_per_decision: float = 0.20  # INCREASED: Higher per-decision cost (was 0.15, now 0.20)
     analysis_cooldown_hours: int = 1  # DECREASED: Shorter cooldown (was 6, now 3)
     max_analyses_per_market_per_day: int = 10  # INCREASED: More analyses per day (was 2, now 4)
     
     # Daily AI spending limits - SAFETY CONTROLS
-    daily_ai_cost_limit: float = 50.0  # Maximum daily spending on AI API calls (USD)
+    daily_ai_cost_limit: float = 150.0  # ⚡ OPTIMIZED: Higher limit to match budget (was 50.0, now 150.0)
     enable_daily_cost_limiting: bool = True  # Enable daily cost limits
     sleep_when_limit_reached: bool = True  # Sleep until next day when limit reached
 
@@ -185,9 +185,9 @@ min_confidence_long_term: float = 0.45  # DECREASED: Lower confidence for distan
 
 # === COST OPTIMIZATION (MORE GENEROUS) ===
 # Enhanced cost controls for the beast mode system
-daily_ai_budget: float = 15.0           # INCREASED: Higher budget for more opportunities (was 10.0, now 15.0)
-max_ai_cost_per_decision: float = 0.12  # INCREASED: Higher per-decision limit (was 0.08, now 0.12)
-analysis_cooldown_hours: int = 2        # DECREASED: Much shorter cooldown (was 4, now 2)
+daily_ai_budget: float = 100.0          # ⚡ OPTIMIZED: 5x increase for maximum opportunity detection (was 15.0, now 100.0)
+max_ai_cost_per_decision: float = 0.20  # INCREASED: Higher per-decision limit (was 0.12, now 0.20)
+analysis_cooldown_hours: int = 1        # ⚡ OPTIMIZED: Shorter cooldown for more frequent re-analysis (was 2, now 1)
 max_analyses_per_market_per_day: int = 6  # INCREASED: More analyses per day (was 3, now 6)
 skip_news_for_low_volume: bool = True   # Skip expensive searches for low volume
 news_search_volume_threshold: float = 1000.0  # News threshold

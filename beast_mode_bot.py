@@ -170,7 +170,7 @@ class BeastModeBot:
                 market_queue = asyncio.Queue()
                 # ✅ FIXED: Pass the shared database manager
                 await run_ingestion(db_manager, market_queue)
-                await asyncio.sleep(300)  # Run every 5 minutes (much slower to prevent 429s)
+                await asyncio.sleep(30)  # ⚡ OPTIMIZED: Run every 30 seconds for 10x faster opportunity detection
             except Exception as e:
                 self.logger.error(f"Error in market ingestion: {e}")
                 await asyncio.sleep(60)
@@ -271,7 +271,7 @@ class BeastModeBot:
             try:
                 # ✅ FIXED: Pass the shared database manager
                 await run_tracking(db_manager)
-                await asyncio.sleep(5)  # ⚡ HIGH-FREQUENCY: Check positions every 5 seconds for rapid exits
+                await asyncio.sleep(2)  # ⚡ ULTRA-HIGH-FREQUENCY: Check positions every 2 seconds for maximum exit speed
             except Exception as e:
                 self.logger.error(f"Error in position tracking: {e}")
                 await asyncio.sleep(30)
