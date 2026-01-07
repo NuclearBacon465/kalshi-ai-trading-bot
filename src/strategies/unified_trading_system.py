@@ -885,6 +885,10 @@ async def run_unified_trading_system(
     logger = get_trading_logger("unified_trading_main")
     
     try:
+        if is_kill_switch_enabled():
+            logger.warning("Kill switch enabled: unified trading system is paused.")
+            return TradingSystemResults()
+
         logger.info("🚀 Starting Unified Advanced Trading System")
 
         if db_manager.is_safe_mode():

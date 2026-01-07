@@ -132,6 +132,10 @@ async def execute_position(
         logger.warning("Safe mode active - skipping trade execution", market_id=position.market_id)
         return False
 
+    if live_mode and is_kill_switch_enabled():
+        logger.warning("Kill switch enabled: forcing simulated execution mode.")
+        live_mode = False
+
     if live_mode:
         try:
             client_order_id = str(uuid.uuid4())
