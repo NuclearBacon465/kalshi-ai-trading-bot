@@ -37,6 +37,7 @@ from src.utils.risk_cooldown import is_risk_cooldown_active
 from src.clients.kalshi_client import KalshiClient
 from src.clients.xai_client import XAIClient
 from src.config.settings import settings
+from src.utils.health import is_safe_mode_active
 
 # Import Beast Mode components
 from src.strategies.unified_trading_system import run_unified_trading_system, TradingSystemConfig
@@ -353,6 +354,13 @@ class BeastModeBot:
         
         while not self.shutdown_event.is_set():
             try:
+                # Check safe mode first (from codex branch)
+                if is_safe_mode_active():
+                    self.logger.warning("🛑 Safe mode active - trading cycle paused")
+                    await asyncio.sleep(60)
+                    continue
+
+                # Check risk cooldown (from main branch)
                 cooldown_active, cooldown_state = is_risk_cooldown_active(db_manager.db_path)
                 if cooldown_active and cooldown_state:
                     remaining = cooldown_state.cooldown_until - datetime.now()

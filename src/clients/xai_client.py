@@ -21,6 +21,7 @@ from openai import AsyncOpenAI
 
 from src.config.settings import settings
 from src.utils.logging_setup import TradingLoggerMixin, log_error_with_context
+from src.utils.health import record_failure
 from src.utils.prompts import SIMPLIFIED_PROMPT_TPL
 
 
@@ -407,6 +408,7 @@ class XAIClient(TradingLoggerMixin):
                 return search_result
                 
             except Exception as sample_error:
+                record_failure("xai")
                 self.logger.warning(
                     "Search request failed", 
                     query=optimized_query[:50],
@@ -416,8 +418,14 @@ class XAIClient(TradingLoggerMixin):
                 return self._get_fallback_context(query, max_length)
 
         except Exception as e:
-            self.logger.warning("Search fallback error", error=str(e))
-            return f"Current information unavailable. Analyzing based on market data. [Search unavailable]"
+            record_failure("xai")
+            self.logger.warning(
+                "Live search failed, using fallback",
+                query=query[:50],
+                error=str(e),
+                error_type=type(e).__name__
+            )
+            return self._get_fallback_context(query, max_length)
     
     def _optimize_search_query(self, query: str) -> str:
         """
@@ -856,8 +864,10 @@ Required format:
             except Exception as e:
                 # Check for resource exhausted errors first
                 if self._is_resource_exhausted_error(e):
+                    record_failure("xai")
                     await self._handle_resource_exhausted_error(str(e))
                     return None, 0.0
+                record_failure("xai")
                 
                 # Check for specific gRPC error indicating deadline exceeded
                 is_deadline_error = "DEADLINE_EXCEEDED" in str(e)
