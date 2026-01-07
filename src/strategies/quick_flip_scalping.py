@@ -97,6 +97,12 @@ class QuickFlipScalpingStrategy:
         
         self.logger.info(f"🔍 Analyzing {len(markets)} markets for quick flip opportunities")
         
+        max_position_size_usd = getattr(settings.trading, "max_position_size_usd", None)
+        max_position_size_pct = getattr(settings.trading, "max_position_size_pct", None)
+        max_position_size_pct_value = None
+        if max_position_size_pct is not None:
+            max_position_size_pct_value = available_capital * (max_position_size_pct / 100)
+
         for market in markets:
             try:
                 # Get current market data
@@ -110,10 +116,10 @@ class QuickFlipScalpingStrategy:
                 
                 # Check if prices are in our target range
                 yes_opportunity = await self._evaluate_price_opportunity(
-                    market, "YES", yes_price, market_info
+                    market, "YES", yes_price, market_info, max_position_size_usd, max_position_size_pct_value
                 )
                 no_opportunity = await self._evaluate_price_opportunity(
-                    market, "NO", no_price, market_info
+                    market, "NO", no_price, market_info, max_position_size_usd, max_position_size_pct_value
                 )
                 
                 if yes_opportunity:
@@ -151,7 +157,9 @@ class QuickFlipScalpingStrategy:
         market: Market,
         side: str,
         current_price: int,
-        market_info: dict
+        market_info: dict,
+        max_position_size_usd: Optional[float],
+        max_position_size_pct_value: Optional[float]
     ) -> Optional[QuickFlipOpportunity]:
         """
         Evaluate if a specific side of a market presents a good quick flip opportunity.
@@ -175,6 +183,40 @@ class QuickFlipScalpingStrategy:
         
         if movement_analysis['confidence'] < self.config.confidence_threshold:
             return None
+
+        proposed_trade_value = self.config.capital_per_trade
+        if (
+            max_position_size_usd is not None
+            and max_position_size_pct_value is not None
+            and proposed_trade_value > max_position_size_usd
+            and proposed_trade_value > max_position_size_pct_value
+        ):
+            self.logger.info(
+                "❌ Skipping quick flip for %s - trade $%.2f exceeds caps: %s%% ($%.2f) and USD cap $%.2f",
+                market.market_id,
+                proposed_trade_value,
+                getattr(settings.trading, "max_position_size_pct", 0),
+                max_position_size_pct_value,
+                max_position_size_usd,
+            )
+            return None
+
+        effective_trade_value = proposed_trade_value
+        if max_position_size_usd is not None and effective_trade_value > max_position_size_usd:
+            effective_trade_value = max_position_size_usd
+        if max_position_size_pct_value is not None and effective_trade_value > max_position_size_pct_value:
+            effective_trade_value = max_position_size_pct_value
+
+        if effective_trade_value <= 0:
+            return None
+
+        if effective_trade_value < proposed_trade_value:
+            self.logger.info(
+                "⚠️ Capping quick flip trade size from $%.2f to $%.2f for %s",
+                proposed_trade_value,
+                effective_trade_value,
+                market.market_id,
+            )
         
         # Calculate position size
         max_position_usd = getattr(settings.trading, "max_position_size_usd", None)
@@ -184,7 +226,7 @@ class QuickFlipScalpingStrategy:
 
         quantity = min(
             self.config.max_position_size,
-            int(max_trade_capital / (current_price / 100))
+            int(effective_trade_value / (current_price / 100))
         )
         
         if quantity < 1:
@@ -193,7 +235,7 @@ class QuickFlipScalpingStrategy:
         expected_profit = quantity * ((movement_analysis['target_price'] - current_price) / 100)
         
         return QuickFlipOpportunity(
-                            market_id=market.market_id,
+            market_id=market.market_id,
             market_title=market.title,
             side=side,
             entry_price=current_price,
@@ -262,12 +304,12 @@ REASON: [brief explanation]
                 if 'TARGET_PRICE:' in line:
                     try:
                         target_price = float(line.split(':')[1].strip())
-                    except:
+                    except (ValueError, IndexError):
                         pass
                 elif 'CONFIDENCE:' in line:
                     try:
                         confidence = float(line.split(':')[1].strip())
-                    except:
+                    except (ValueError, IndexError):
                         pass
                 elif 'REASON:' in line:
                     reason = line.split(':', 1)[1].strip()
