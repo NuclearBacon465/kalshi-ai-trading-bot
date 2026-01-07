@@ -101,6 +101,14 @@ class AdvancedPortfolioOptimizer:
         kalshi_client: KalshiClient,
         xai_client: XAIClient
     ):
+        # 🔧 VALIDATION: Prevent None parameters
+        if db_manager is None:
+            raise ValueError("DatabaseManager cannot be None")
+        if kalshi_client is None:
+            raise ValueError("KalshiClient cannot be None")
+        if xai_client is None:
+            raise ValueError("XAIClient cannot be None")
+
         self.db_manager = db_manager
         self.kalshi_client = kalshi_client
         self.xai_client = xai_client
@@ -172,7 +180,7 @@ class AdvancedPortfolioOptimizer:
                 # Update the opportunity object in place
                 opp.kelly_fraction = kelly_val
                 opp.fractional_kelly = kelly_val * 0.5  # Conservative Kelly
-                opp.risk_adjusted_fraction = final_kelly
+                opp.risk_adjusted_fraction = kelly_val  # 🔧 FIXED: Use kelly_val instead of undefined final_kelly
             
             # Step 4: Apply correlation adjustments
             correlation_matrix = await self._estimate_correlation_matrix(enhanced_opportunities)

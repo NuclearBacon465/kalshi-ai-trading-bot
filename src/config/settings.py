@@ -28,6 +28,7 @@ class TradingConfig:
     """Trading strategy configuration."""
     # Position sizing and risk management - MADE MORE AGGRESSIVE  
     max_position_size_pct: float = 50.0  # INCREASED: Back to 5% per position (was 3%)
+    max_position_size_usd: float = 1000.0  # Absolute USD cap per position
     max_portfolio_exposure_pct: float = 90.0  # allow up to 90% deployed across open positions
     max_daily_loss_pct: float = 50.0    # INCREASED: Allow 15% daily loss (was 10%) 
     max_positions: int = 30              # INCREASED: Allow 15 concurrent positions (was 10)
@@ -37,8 +38,8 @@ class TradingConfig:
     min_volume: float = 50.0            # DECREASED: Much lower volume requirement (was 500, now 200)
     max_time_to_expiry_days: int = 30    # INCREASED: Allow longer timeframes (was 14, now 30)
     
-    # AI decision making - MORE AGGRESSIVE THRESHOLDS
-    min_confidence_to_trade: float = 0.40   # DECREASED: Lower confidence barrier (was 0.65, now 0.50)
+    # AI decision making - HIGH RISK HIGH REWARD
+    min_confidence_to_trade: float = 0.50   # AGGRESSIVE: Take more trades with 50%+ confidence for higher volume
     scan_interval_seconds: int = 10      # DECREASED: Scan more frequently (was 60, now 30)
     
     # AI model configuration
@@ -46,15 +47,16 @@ class TradingConfig:
     fallback_model: str = "grok-3"  # Fallback to available model
     ai_temperature: float = 0  # Lower temperature for more consistent JSON output
     ai_max_tokens: int = 8000    # Reasonable limit for reasoning models (grok-4 works better with 8000)
+    ai_requests_per_minute: int = 60  # Per-minute request limit for AI calls
     
     # Position sizing (LEGACY - now using Kelly-primary approach)
     default_position_size: float = 3.0  # REDUCED: Now using Kelly Criterion as primary method (was 5%, now 3%)
     position_size_multiplier: float = 1.0  # Multiplier for AI confidence
     
-    # Kelly Criterion settings (PRIMARY position sizing method) - MORE AGGRESSIVE
+    # Kelly Criterion settings (PRIMARY position sizing method) - AGGRESSIVE FOR HIGH RISK/REWARD
     use_kelly_criterion: bool = True        # Use Kelly Criterion for position sizing (PRIMARY METHOD)
-    kelly_fraction: float = 1.0            # INCREASED: More aggressive Kelly multiplier (was 0.5, now 0.75)
-    max_single_position: float = 0.50       # INCREASED: Higher position cap (was 0.03, now 5%)
+    kelly_fraction: float = 0.75            # AGGRESSIVE: 75% Kelly for higher returns (high risk/reward)
+    max_single_position: float = 0.40       # AGGRESSIVE: 40% max position size for bigger bets
     
     # Trading frequency - MORE FREQUENT
     market_scan_interval: int = 15          # DECREASED: Scan every 30 seconds (was 60)
@@ -73,23 +75,28 @@ class TradingConfig:
     high_confidence_market_odds: float = 0.90 # Market price to look for
     high_confidence_expiry_hours: int = 24   # Max hours until expiry
 
-    # AI trading criteria - MORE PERMISSIVE
+    # AI trading criteria - AGGRESSIVE FOR HIGH VOLUME
     max_analysis_cost_per_decision: float = 0.15  # INCREASED: Allow higher cost per decision (was 0.10, now 0.15)
-    min_confidence_threshold: float = 0.45  # DECREASED: Lower confidence threshold (was 0.55, now 0.45)
+    min_confidence_threshold: float = 0.50  # AGGRESSIVE: Take more trades at 50%+ confidence
 
     # Cost control and market analysis frequency - MORE PERMISSIVE
-    daily_ai_budget: float = 20.0  # INCREASED: Higher daily budget (was 5.0, now 10.0)
-    max_ai_cost_per_decision: float = 0.15  # INCREASED: Higher per-decision cost (was 0.05, now 0.08)
+    daily_ai_budget: float = 100.0  # ⚡ OPTIMIZED: 5x increase for maximum opportunity detection (was 20.0, now 100.0)
+    max_ai_cost_per_decision: float = 0.20  # INCREASED: Higher per-decision cost (was 0.15, now 0.20)
     analysis_cooldown_hours: int = 1  # DECREASED: Shorter cooldown (was 6, now 3)
     max_analyses_per_market_per_day: int = 10  # INCREASED: More analyses per day (was 2, now 4)
     
     # Daily AI spending limits - SAFETY CONTROLS
-    daily_ai_cost_limit: float = 50.0  # Maximum daily spending on AI API calls (USD)
+    daily_ai_cost_limit: float = 150.0  # ⚡ OPTIMIZED: Higher limit to match budget (was 50.0, now 150.0)
     enable_daily_cost_limiting: bool = True  # Enable daily cost limits
     sleep_when_limit_reached: bool = True  # Sleep until next day when limit reached
 
+    # Task restart policy for background supervisors
+    restart_failed_tasks: bool = True
+    max_task_restarts: int = 3
+    task_restart_delay_seconds: int = 5
+
     # Enhanced market filtering to reduce analyses - MORE PERMISSIVE
-    min_volume_for_ai_analysis: float = 50.0  # DECREASED: Much lower threshold (was 500, now 200)
+    min_volume_for_ai_analysis: float = 25.0  # DECREASED: Much lower threshold (was 50, now 25 for more opportunities)
     exclude_low_liquidity_categories: List[str] = field(default_factory=lambda: [
         # REMOVED weather and entertainment - trade all categories
     ])
@@ -97,7 +104,7 @@ class TradingConfig:
     # === EXECUTION MODES (strategies read these) ===
     live_trading_enabled: bool = True      # MUST be True to actually send orders
     paper_trading_mode: bool = False      # True = simulate only
-    kill_switch_enabled: bool = False     # Emergency kill switch for all trading
+    kill_switch_enabled: bool = False     # Emergency stop for all trading
     
     # === PORTFOLIO / STRATEGY SETTINGS (code references settings.trading.*) ===
     total_capital: Optional[float] = None  # None = use live Kalshi balance
@@ -105,6 +112,7 @@ class TradingConfig:
 
     min_position_size: float = 2.0         # allow tiny test trades
     max_position_size: float = 1000.0      # high cap; % caps usually bind first
+    max_position_size_usd: float = 1000.0  # absolute USD cap per position
 
     max_concurrent_markets: int = 50
     ev_threshold: float = 0.01             # lower = more trades
@@ -113,6 +121,10 @@ class TradingConfig:
     news_search_volume_threshold: float = 200.0
 
     target_sharpe: float = 0.10
+
+    # Order hygiene
+    stale_order_max_age_minutes: int = 30
+    stale_order_price_drift_cents: int = 5
 
 
 @dataclass
@@ -155,8 +167,8 @@ max_sector_exposure: float = 0.90       # Very high sector concentration (90%)
 # System performance objectives - MORE AGGRESSIVE FOR MORE TRADES
 target_sharpe: float = 0.3              # DECREASED: Lower Sharpe requirement (was 0.5, now 0.3)
 target_return: float = 0.15             # INCREASED: Higher return target (was 0.10, now 0.15)
-min_trade_edge: float = 0.08           # DECREASED: Lower edge requirement (was 0.15, now 8%)
-min_confidence_for_large_size: float = 0.50  # DECREASED: Lower confidence requirement (was 0.65, now 50%)
+min_trade_edge: float = 0.05           # DECREASED: Lower edge requirement (was 0.08, now 5% for more trades)
+min_confidence_for_large_size: float = 0.40  # DECREASED: Lower confidence requirement (was 0.50, now 40%)
 
 # === DYNAMIC EXIT STRATEGIES ===
 # Enhanced exit strategy settings - MORE AGGRESSIVE
@@ -170,7 +182,7 @@ volatility_adjustment: bool = True      # Adjust exits based on volatility
 # === MARKET MAKING STRATEGY ===
 # Settings for limit order market making - MORE AGGRESSIVE
 enable_market_making: bool = True       # Enable market making strategy
-min_spread_for_making: float = 0.01     # DECREASED: Accept smaller spreads (was 0.02, now 1¢)
+min_spread_for_making: float = 0.005    # DECREASED: Accept smaller spreads (was 0.01, now 0.5¢ for more opportunities)
 max_inventory_risk: float = 0.15        # INCREASED: Allow higher inventory risk (was 0.10, now 15%)
 order_refresh_minutes: int = 15         # Refresh orders every 15 minutes
 max_orders_per_market: int = 4          # Maximum orders per market (2 each side)
@@ -178,17 +190,17 @@ max_orders_per_market: int = 4          # Maximum orders per market (2 each side
 # === MARKET SELECTION (ENHANCED FOR MORE OPPORTUNITIES) ===
 # Removed time restrictions - trade ANY deadline with dynamic exits!
 # max_time_to_expiry_days: REMOVED      # No longer used - trade any timeline!
-min_volume_for_analysis: float = 200.0  # DECREASED: Much lower minimum volume (was 1000, now 200)
-min_volume_for_market_making: float = 500.0  # DECREASED: Lower volume for market making (was 2000, now 500)
+min_volume_for_analysis: float = 100.0  # DECREASED: Much lower minimum volume (was 200, now 100 for more opportunities)
+min_volume_for_market_making: float = 250.0  # DECREASED: Lower volume for market making (was 500, now 250)
 min_price_movement: float = 0.02        # DECREASED: Lower minimum range (was 0.05, now 2¢)
 max_bid_ask_spread: float = 0.15        # INCREASED: Allow wider spreads (was 0.10, now 15¢)
 min_confidence_long_term: float = 0.45  # DECREASED: Lower confidence for distant expiries (was 0.65, now 45%)
 
 # === COST OPTIMIZATION (MORE GENEROUS) ===
 # Enhanced cost controls for the beast mode system
-daily_ai_budget: float = 15.0           # INCREASED: Higher budget for more opportunities (was 10.0, now 15.0)
-max_ai_cost_per_decision: float = 0.12  # INCREASED: Higher per-decision limit (was 0.08, now 0.12)
-analysis_cooldown_hours: int = 2        # DECREASED: Much shorter cooldown (was 4, now 2)
+daily_ai_budget: float = 100.0          # ⚡ OPTIMIZED: 5x increase for maximum opportunity detection (was 15.0, now 100.0)
+max_ai_cost_per_decision: float = 0.20  # INCREASED: Higher per-decision limit (was 0.12, now 0.20)
+analysis_cooldown_hours: int = 1        # ⚡ OPTIMIZED: Shorter cooldown for more frequent re-analysis (was 2, now 1)
 max_analyses_per_market_per_day: int = 6  # INCREASED: More analyses per day (was 3, now 6)
 skip_news_for_low_volume: bool = True   # Skip expensive searches for low volume
 news_search_volume_threshold: float = 1000.0  # News threshold

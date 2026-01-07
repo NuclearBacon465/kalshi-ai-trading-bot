@@ -6,13 +6,15 @@ This job takes a position and executes it as a trade.
 import asyncio
 import uuid
 from datetime import datetime
-from typing import Optional, Dict
+from typing import Optional, Dict, Iterable, Any, List
 
 from src.utils.database import DatabaseManager, Position
-from src.config.settings import settings
 from src.utils.logging_setup import get_trading_logger
+from src.utils.safety import enforce_kill_switch
 from src.clients.kalshi_client import KalshiClient, KalshiAPIError
-from src.utils.safety import is_kill_switch_enabled
+from src.utils.health import is_safe_mode_active
+from src.utils.notifications import get_notifier
+
 
 async def execute_position(
     position: Position, 
@@ -33,7 +35,102 @@ async def execute_position(
         True if execution was successful, False otherwise.
     """
     logger = get_trading_logger("trade_execution")
+    notifier = get_notifier()
+
     logger.info(f"Executing position for market: {position.market_id}")
+    live_mode = enforce_kill_switch(live_mode, logger)
+
+    # Check safe mode from database manager
+    if db_manager.is_safe_mode():
+        logger.warning(
+            "Safe mode active (db_manager) - skipping trade execution",
+            market_id=position.market_id,
+            position_id=position.id
+        )
+        if position.id is not None:
+            await db_manager.update_position_status(position.id, "voided")
+        return False
+
+    # Also check global safe mode
+    if is_safe_mode_active():
+        logger.warning(
+            "Safe mode active (global) - blocking trade execution",
+            market_id=position.market_id
+        )
+        if position.id is not None:
+            await db_manager.update_position_status(position.id, "voided")
+        return False
+
+    async def fetch_fills_with_backoff(
+        ticker: str,
+        client_order_id: str,
+        max_attempts: int = 4,
+        base_delay: float = 0.5
+    ) -> list:
+        for attempt in range(1, max_attempts + 1):
+            fills_response = await kalshi_client.get_fills(ticker=ticker)
+            fills = fills_response.get("fills", [])
+            matching = [
+                fill for fill in fills
+                if fill.get("client_order_id") == client_order_id
+            ]
+            if matching:
+                return matching
+            if attempt < max_attempts:
+                sleep_time = base_delay * (2 ** (attempt - 1))
+                logger.info(
+                    "No fills yet for order %s (attempt %s/%s). Retrying in %.2fs.",
+                    client_order_id,
+                    attempt,
+                    max_attempts,
+                    sleep_time
+                )
+                await asyncio.sleep(sleep_time)
+        return []
+
+    def calculate_average_fill_price(fills: list, side: str) -> tuple[Optional[float], int]:
+        total_price_cents = 0
+        total_count = 0
+
+        for fill in fills:
+            fill_count = fill.get("count")
+            if fill_count is None:
+                fill_count = fill.get("filled") or fill.get("quantity")
+            try:
+                fill_count = int(fill_count) if fill_count is not None else 0
+            except (TypeError, ValueError):
+                fill_count = 0
+
+            if fill_count <= 0:
+                continue
+
+            fill_price = fill.get("price")
+            if fill_price is None:
+                if side.upper() == "YES":
+                    fill_price = fill.get("yes_price")
+                else:
+                    fill_price = fill.get("no_price")
+
+            try:
+                fill_price = int(fill_price) if fill_price is not None else None
+            except (TypeError, ValueError):
+                fill_price = None
+
+            if fill_price is None:
+                continue
+
+            total_count += fill_count
+            total_price_cents += fill_price * fill_count
+
+        if total_count == 0:
+            return None, 0
+
+        average_price = total_price_cents / total_count / 100
+        return average_price, total_count
+
+    if db_manager.is_safe_mode_active():
+        logger.warning("Safe mode active - skipping trade execution", market_id=position.market_id)
+        return False
 
     if live_mode and is_kill_switch_enabled():
         logger.warning("Kill switch enabled: forcing simulated execution mode.")
@@ -42,6 +139,17 @@ async def execute_position(
     if live_mode:
         try:
             client_order_id = str(uuid.uuid4())
+
+            # 🔔 Notify: Order being placed
+            notifier.notify_order_placed(
+                order_id=client_order_id,
+                market_id=position.market_id,
+                action="buy",
+                side=position.side,
+                quantity=position.quantity,
+                order_type="market"
+            )
+
             order_response = await kalshi_client.place_order(
                 ticker=position.market_id,
                 client_order_id=client_order_id,
@@ -51,18 +159,75 @@ async def execute_position(
                 type_="market"
             )
             
-            # For a market order, the fill price is not guaranteed.
-            # A more robust implementation would query the /fills endpoint
-            # to confirm the execution price after the fact.
-            # For now, we will optimistically assume it fills at the entry price.
-            fill_price = position.entry_price
+            # Fetch fills with exponential backoff to get actual execution price
+            fills = await fetch_fills_with_backoff(position.market_id, client_order_id)
+            average_fill_price, total_filled = calculate_average_fill_price(fills, position.side)
 
+            order_id = order_response.get('order', {}).get('order_id', client_order_id)
+
+            if average_fill_price is not None and total_filled >= position.quantity:
+                await db_manager.update_position_to_live(position.id, average_fill_price)
+                
+                # 🔔 Notify: Order filled
+                notifier.notify_order_filled(
+                    order_id=order_id,
+                    market_id=position.market_id,
+                    fill_price=average_fill_price
+                )
+
+                # 🔔 Notify: Trade opened
+                notifier.notify_trade_opened(
+                    market_id=position.market_id,
+                    side=position.side,
+                    quantity=position.quantity,
+                    price=average_fill_price,
+                    confidence=position.confidence,
+                    edge=getattr(position, 'edge', 0.05)  # Estimate if not stored
+                )
+
+                logger.info(
+                    "Successfully placed LIVE order for %s. Order ID: %s, Fill Price: $%.3f",
+                    position.market_id,
+                    order_id,
+                    average_fill_price
+                )
+                return True
+
+            # Partial fill or no fills found - use entry price as fallback
+            logger.warning(
+                "Order for %s not fully confirmed via fills (filled %s/%s). Using entry price.",
+                position.market_id,
+                total_filled,
+                position.quantity
+            )
+            
+            # Fall back to entry price if fills not confirmed
+            fill_price = position.entry_price
             await db_manager.update_position_to_live(position.id, fill_price)
-            logger.info(f"Successfully placed LIVE order for {position.market_id}. Order ID: {order_response.get('order', {}).get('order_id')}")
+
+            # 🔔 Notify: Order filled (with fallback price)
+            notifier.notify_order_filled(
+                order_id=order_id,
+                market_id=position.market_id,
+                fill_price=fill_price
+            )
+
+            # 🔔 Notify: Trade opened
+            notifier.notify_trade_opened(
+                market_id=position.market_id,
+                side=position.side,
+                quantity=position.quantity,
+                price=fill_price,
+                confidence=position.confidence,
+                edge=getattr(position, 'edge', 0.05)
+            )
+
+            logger.info(f"Successfully placed LIVE order for {position.market_id}. Order ID: {order_id}")
             return True
 
         except KalshiAPIError as e:
             logger.error(f"Failed to place LIVE order: {e}")
+            db_manager.record_failure(f"KalshiAPIError: {e}")
             await db_manager.update_position_status(position.id, "voided")  # order failed; don't count as open exposure
             return False
     else:
@@ -70,6 +235,92 @@ async def execute_position(
         await db_manager.update_position_to_live(position.id, position.entry_price)
         logger.info(f"Successfully placed SIMULATED order for {position.market_id}")
         return True
+
+
+def _normalize_fill_price(price: Any) -> Optional[float]:
+    if price is None:
+        return None
+    try:
+        normalized = float(price)
+    except (TypeError, ValueError):
+        return None
+    if normalized > 1.0:
+        normalized /= 100
+    return normalized
+
+
+def _extract_fill_price(fill: Dict[str, Any], side: str) -> Optional[float]:
+    side_key = side.lower()
+    if "price" in fill:
+        return _normalize_fill_price(fill.get("price"))
+    if side_key == "yes" and "yes_price" in fill:
+        return _normalize_fill_price(fill.get("yes_price"))
+    if side_key == "no" and "no_price" in fill:
+        return _normalize_fill_price(fill.get("no_price"))
+    if "yes_price" in fill:
+        return _normalize_fill_price(fill.get("yes_price"))
+    if "no_price" in fill:
+        return _normalize_fill_price(fill.get("no_price"))
+    return None
+
+
+def _extract_fill_count(fill: Dict[str, Any]) -> Optional[int]:
+    for key in ("count", "quantity", "size", "filled_count"):
+        if key in fill and fill[key] is not None:
+            try:
+                return int(fill[key])
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def _calculate_average_fill_price(
+    fills: Iterable[Dict[str, Any]],
+    side: str,
+) -> Optional[float]:
+    total_notional = 0.0
+    total_count = 0
+
+    for fill in fills:
+        fill_price = _extract_fill_price(fill, side)
+        if fill_price is None:
+            continue
+        fill_count = _extract_fill_count(fill) or 1
+        total_notional += fill_price * fill_count
+        total_count += fill_count
+
+    if total_count == 0:
+        return None
+    return total_notional / total_count
+
+
+async def _fetch_average_fill_price(
+    kalshi_client: KalshiClient,
+    ticker: str,
+    client_order_id: str,
+    side: str,
+    max_attempts: int = 3,
+    base_delay: float = 0.5,
+) -> Optional[float]:
+    for attempt in range(max_attempts):
+        fills_response = await kalshi_client.get_fills(ticker=ticker)
+        raw_fills = fills_response.get("fills") or fills_response.get("data") or []
+        fills: List[Dict[str, Any]] = raw_fills if isinstance(raw_fills, list) else []
+
+        matching_fills = [
+            fill for fill in fills
+            if fill.get("client_order_id") == client_order_id
+            or fill.get("clientOrderId") == client_order_id
+        ]
+
+        average_price = _calculate_average_fill_price(matching_fills, side)
+        if average_price is not None:
+            return average_price
+
+        if attempt < max_attempts - 1:
+            await asyncio.sleep(base_delay * (2 ** attempt))
+
+    return None
 
 
 async def place_sell_limit_order(
@@ -91,6 +342,10 @@ async def place_sell_limit_order(
         True if order placed successfully, False otherwise
     """
     logger = get_trading_logger("sell_limit_order")
+
+    if db_manager.is_safe_mode_active():
+        logger.warning("Safe mode active - skipping sell limit order", market_id=position.market_id)
+        return False
     
     try:
         import uuid
@@ -139,6 +394,10 @@ async def place_sell_limit_order(
             logger.error(f"❌ Failed to place sell limit order: {response}")
             return False
             
+    except KalshiAPIError as e:
+        logger.error(f"❌ Kalshi error placing sell limit order for {position.market_id}: {e}")
+        db_manager.record_failure("kalshi_api_error")
+        return False
     except Exception as e:
         logger.error(f"❌ Error placing sell limit order for {position.market_id}: {e}")
         return False
@@ -203,6 +462,9 @@ async def place_profit_taking_orders(
                     if profit_pct >= profit_threshold:
                         # Calculate sell limit price (slightly below current to ensure execution)
                         sell_price = current_price * 0.98  # 2% below current price for quick execution
+
+                        # ⚠️ CRITICAL FIX: Ensure price is valid (minimum 1¢, maximum 99¢)
+                        sell_price = max(0.01, min(0.99, sell_price))  # Clamp between 1¢ and 99¢
                         
                         logger.info(f"💰 PROFIT TARGET HIT: {position.market_id} - {profit_pct:.1%} profit (${unrealized_pnl:.2f})")
                         
@@ -287,9 +549,12 @@ async def place_stop_loss_orders(
                     
                     # Check if we need stop-loss protection
                     if loss_pct <= stop_loss_threshold:  # Negative loss percentage
-                        # Calculate stop-loss sell price
+                        # Calculate stop-loss sell price with safety bounds
+                        # For a -10% stop loss, we want to sell at 90% * 0.9 = 81% of entry
                         stop_price = position.entry_price * (1 + stop_loss_threshold * 1.1)  # Slightly more aggressive
-                        stop_price = max(0.01, stop_price)  # Ensure price is at least 1¢
+
+                        # ⚠️ CRITICAL FIX: Ensure price is valid (minimum 1¢, maximum 99¢)
+                        stop_price = max(0.01, min(0.99, stop_price))  # Clamp between 1¢ and 99¢
                         
                         logger.info(f"🛡️ STOP LOSS TRIGGERED: {position.market_id} - {loss_pct:.1%} loss (${unrealized_pnl:.2f})")
                         
