@@ -32,6 +32,7 @@ from src.clients.xai_client import XAIClient
 from src.utils.database import DatabaseManager, Market, Position
 from src.config.settings import settings
 from src.utils.logging_setup import get_trading_logger
+from src.utils.safety import is_kill_switch_enabled
 
 from src.strategies.market_making import (
     AdvancedMarketMaker, 
@@ -815,6 +816,10 @@ async def run_unified_trading_system(
     logger = get_trading_logger("unified_trading_main")
     
     try:
+        if is_kill_switch_enabled():
+            logger.warning("Kill switch enabled: unified trading system is paused.")
+            return TradingSystemResults()
+
         logger.info("🚀 Starting Unified Advanced Trading System")
         
         # Initialize system

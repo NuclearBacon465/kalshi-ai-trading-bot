@@ -12,6 +12,7 @@ from src.utils.database import DatabaseManager, Position
 from src.config.settings import settings
 from src.utils.logging_setup import get_trading_logger
 from src.clients.kalshi_client import KalshiClient, KalshiAPIError
+from src.utils.safety import is_kill_switch_enabled
 
 async def execute_position(
     position: Position, 
@@ -33,6 +34,10 @@ async def execute_position(
     """
     logger = get_trading_logger("trade_execution")
     logger.info(f"Executing position for market: {position.market_id}")
+
+    if live_mode and is_kill_switch_enabled():
+        logger.warning("Kill switch enabled: forcing simulated execution mode.")
+        live_mode = False
 
     if live_mode:
         try:

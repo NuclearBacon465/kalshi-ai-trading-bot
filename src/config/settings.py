@@ -97,6 +97,7 @@ class TradingConfig:
     # === EXECUTION MODES (strategies read these) ===
     live_trading_enabled: bool = True      # MUST be True to actually send orders
     paper_trading_mode: bool = False      # True = simulate only
+    kill_switch_enabled: bool = False     # Emergency kill switch for all trading
     
     # === PORTFOLIO / STRATEGY SETTINGS (code references settings.trading.*) ===
     total_capital: Optional[float] = None  # None = use live Kalshi balance

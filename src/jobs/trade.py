@@ -25,6 +25,7 @@ from src.clients.xai_client import XAIClient
 from src.utils.database import DatabaseManager
 from src.config.settings import settings
 from src.utils.logging_setup import get_trading_logger
+from src.utils.safety import is_kill_switch_enabled
 
 # Import the new unified system
 from src.strategies.unified_trading_system import (
@@ -55,6 +56,10 @@ async def run_trading_job() -> Optional[TradingSystemResults]:
     logger = get_trading_logger("trading_job")
     
     try:
+        if is_kill_switch_enabled():
+            logger.warning("Kill switch enabled: skipping trading job execution.")
+            return TradingSystemResults()
+
         logger.info("🚀 Starting Enhanced Trading Job - Beast Mode Activated!")
         
         # Initialize clients
@@ -131,6 +136,10 @@ async def _fallback_legacy_trading() -> Optional[TradingSystemResults]:
     logger = get_trading_logger("trading_job_fallback")
     
     try:
+        if is_kill_switch_enabled():
+            logger.warning("Kill switch enabled: skipping fallback trading execution.")
+            return TradingSystemResults()
+
         logger.info("🔄 Executing fallback legacy trading system")
         
         # Initialize components
