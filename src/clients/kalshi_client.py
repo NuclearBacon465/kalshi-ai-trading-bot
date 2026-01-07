@@ -56,8 +56,7 @@ class KalshiClient(TradingLoggerMixin):
         self.max_retries = max_retries
         self.backoff_factor = backoff_factor
         
-        # Load private key
-        self._load_private_key()
+        # Load private key lazily on first authenticated request
         
         # HTTP client with timeouts
         self.client = httpx.AsyncClient(
@@ -70,6 +69,8 @@ class KalshiClient(TradingLoggerMixin):
     def _load_private_key(self) -> None:
         """Load private key from file."""
         try:
+            if self.private_key is not None:
+                return
             private_key_path = Path(self.private_key_path)
             if not private_key_path.exists():
                 raise KalshiAPIError(f"Private key file not found: {self.private_key_path}")
@@ -146,6 +147,8 @@ class KalshiClient(TradingLoggerMixin):
         
         # Add authentication headers if required
         if require_auth:
+            if self.private_key is None:
+                self._load_private_key()
             # Get current timestamp in milliseconds
             timestamp = str(int(time.time() * 1000))
             

@@ -32,6 +32,7 @@ from src.clients.xai_client import XAIClient
 from src.utils.database import DatabaseManager, Market, Position
 from src.config.settings import settings
 from src.utils.logging_setup import get_trading_logger
+from src.utils.safety import should_halt_trading
 
 from src.strategies.market_making import (
     AdvancedMarketMaker, 
@@ -74,6 +75,7 @@ class TradingSystemConfig:
     rebalance_frequency_hours: int = 6  # Rebalance every 6 hours
     profit_taking_threshold: float = 0.25  # Take profits at 25%
     loss_cutting_threshold: float = 0.10  # Cut losses at 10%
+    risk_cooldown_minutes: int = 30  # Pause new trades after risk violations
 
 
 @dataclass
@@ -223,6 +225,9 @@ class UnifiedAdvancedTradingSystem:
         6. Monitor and rebalance as needed
         """
         self.logger.info("🚀 Executing Unified Advanced Trading Strategy")
+
+        if should_halt_trading(self.logger):
+            return TradingSystemResults()
         
         try:
             # Step 0: Check and enforce position limits AND cash reserves
@@ -288,7 +293,12 @@ class UnifiedAdvancedTradingSystem:
                 self.logger.warning("No positions created by main strategies - investigating why")
             
             # Step 5: Risk management and rebalancing
-            await self._manage_risk_and_rebalance(results)
+            cooldown_until = await self._manage_risk_and_rebalance(results)
+            if cooldown_until:
+                self.logger.warning(
+                    f"⏸️ Risk cooldown active until {cooldown_until.isoformat()} - "
+                    "new trades will be skipped next cycle"
+                )
             
             self.logger.info(
                 f"🎯 Unified Strategy Complete: "
@@ -613,7 +623,7 @@ class UnifiedAdvancedTradingSystem:
                         results['successful_executions'] += 1
                         results['positions_created'] += 1
                         results['total_capital_used'] += position_value
-                        self.logger.info(f"✅ Executed position: {market_id} {side} {quantity} at {price:.3f}")
+                        self.logger.info(f"✅ Executed position: {market_id} {intended_side} {quantity} at {price:.3f}")
                     else:
                         results['failed_executions'] += 1
                         self.logger.error(f"❌ Failed to execute position for {market_id}")
@@ -730,7 +740,7 @@ class UnifiedAdvancedTradingSystem:
             self.logger.error(f"Error compiling results: {e}")
             return TradingSystemResults()
 
-    async def _manage_risk_and_rebalance(self, results: TradingSystemResults):
+    async def _manage_risk_and_rebalance(self, results: TradingSystemResults) -> Optional[datetime]:
         """
         Manage risk and rebalance portfolio if needed.
         """
@@ -749,7 +759,14 @@ class UnifiedAdvancedTradingSystem:
             
             if risk_violations:
                 self.logger.warning(f"⚠️  Risk violations detected: {risk_violations}")
-                # TODO: Implement automatic position sizing reduction
+                cooldown_until = datetime.now() + timedelta(minutes=self.config.risk_cooldown_minutes)
+                from src.utils.risk_cooldown import save_risk_cooldown_state
+                save_risk_cooldown_state(self.db_manager.db_path, cooldown_until, risk_violations)
+                self.logger.warning(
+                    f"🛑 Risk cooldown activated until {cooldown_until.isoformat()} "
+                    f"to prevent new trades next cycle"
+                )
+                return cooldown_until
             
             # Check if rebalancing is needed
             time_since_rebalance = datetime.now() - self.last_rebalance
@@ -767,6 +784,7 @@ class UnifiedAdvancedTradingSystem:
             
         except Exception as e:
             self.logger.error(f"Error in risk management: {e}")
+        return None
 
 
 
