@@ -315,6 +315,10 @@ class DatabaseManager(TradingLoggerMixin):
                 warnings INTEGER DEFAULT 0,
                 action_items INTEGER DEFAULT 0,
                 report_file TEXT,
+                rolling_win_rate REAL DEFAULT 0.0,
+                rolling_max_drawdown REAL DEFAULT 0.0,
+                rolling_sharpe REAL DEFAULT 0.0,
+                ready_for_live BOOLEAN DEFAULT 0,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -353,6 +357,26 @@ class DatabaseManager(TradingLoggerMixin):
             if 'target_confidence_change' not in column_names:
                 await db.execute("ALTER TABLE positions ADD COLUMN target_confidence_change REAL")
                 self.logger.info("Added target_confidence_change column to positions table")
+
+            cursor = await db.execute("PRAGMA table_info(analysis_reports)")
+            analysis_columns = await cursor.fetchall()
+            analysis_column_names = [col[1] for col in analysis_columns]
+
+            if 'rolling_win_rate' not in analysis_column_names:
+                await db.execute("ALTER TABLE analysis_reports ADD COLUMN rolling_win_rate REAL DEFAULT 0.0")
+                self.logger.info("Added rolling_win_rate column to analysis_reports table")
+
+            if 'rolling_max_drawdown' not in analysis_column_names:
+                await db.execute("ALTER TABLE analysis_reports ADD COLUMN rolling_max_drawdown REAL DEFAULT 0.0")
+                self.logger.info("Added rolling_max_drawdown column to analysis_reports table")
+
+            if 'rolling_sharpe' not in analysis_column_names:
+                await db.execute("ALTER TABLE analysis_reports ADD COLUMN rolling_sharpe REAL DEFAULT 0.0")
+                self.logger.info("Added rolling_sharpe column to analysis_reports table")
+
+            if 'ready_for_live' not in analysis_column_names:
+                await db.execute("ALTER TABLE analysis_reports ADD COLUMN ready_for_live BOOLEAN DEFAULT 0")
+                self.logger.info("Added ready_for_live column to analysis_reports table")
                 
             await db.commit()
             

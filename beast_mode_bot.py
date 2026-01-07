@@ -25,7 +25,8 @@ import argparse
 import time
 import signal
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, Tuple
+import aiosqlite
 
 from src.jobs.trade import run_trading_job
 from src.jobs.ingest import run_ingestion
@@ -333,11 +334,51 @@ Beast Mode Features:
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         help="Set the logging level (default: INFO)"
     )
+    parser.add_argument(
+        "--force-live",
+        action="store_true",
+        help="Override live trading safety check (use with caution)"
+    )
     
     args = parser.parse_args()
     
     # Setup logging
     setup_logging(log_level=args.log_level)
+    logger = get_trading_logger("beast_mode_bot")
+
+    async def check_live_readiness() -> Tuple[bool, str]:
+        db_manager = DatabaseManager()
+        await db_manager.initialize()
+        async with aiosqlite.connect(db_manager.db_path) as db:
+            cursor = await db.execute("""
+                SELECT ready_for_live, rolling_win_rate, rolling_max_drawdown, rolling_sharpe, timestamp
+                FROM analysis_reports
+                ORDER BY timestamp DESC
+                LIMIT 1
+            """)
+            latest = await cursor.fetchone()
+
+        if not latest:
+            return False, "No analysis report available"
+
+        ready_for_live = bool(latest[0])
+        summary = (
+            f"ready_for_live={ready_for_live}, "
+            f"win_rate={latest[1]:.1%}, "
+            f"max_drawdown={latest[2]:.1%}, "
+            f"sharpe={latest[3]:.2f}, "
+            f"reported_at={latest[4]}"
+        )
+        return ready_for_live, summary
+
+    if args.live and not args.force_live and not args.dashboard:
+        ready_for_live, reason = await check_live_readiness()
+        if not ready_for_live:
+            logger.error("Live trading blocked", reason=reason)
+            print(f"🚫 LIVE TRADING BLOCKED: {reason}")
+            return
+    elif args.live and args.force_live and not args.dashboard:
+        logger.warning("Live trading override enabled", reason="--force-live")
     
     # Warn about live mode
     if args.live and not args.dashboard:
