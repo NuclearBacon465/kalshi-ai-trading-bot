@@ -49,6 +49,11 @@ class XAIClient(TradingLoggerMixin):
     xAI client for AI-powered trading decisions.
     Uses Grok models for market analysis and trading strategy.
     """
+
+    _request_semaphore = asyncio.Semaphore(1)
+    _request_lock = asyncio.Lock()
+    _last_request_ts = 0.0
+    _min_request_interval = 0.75
     
     def __init__(self, api_key: Optional[str] = None, db_manager=None):
         """
@@ -90,6 +95,21 @@ class XAIClient(TradingLoggerMixin):
             today_cost=self.daily_tracker.total_cost,
             today_requests=self.daily_tracker.request_count
         )
+
+    async def _acquire_request_slot(self) -> None:
+        """Queue xAI requests to avoid cost spikes and rate errors."""
+        await XAIClient._request_semaphore.acquire()
+        try:
+            async with XAIClient._request_lock:
+                now = time.monotonic()
+                elapsed = now - XAIClient._last_request_ts
+                wait_time = XAIClient._min_request_interval - elapsed
+                if wait_time > 0:
+                    await asyncio.sleep(wait_time)
+                XAIClient._last_request_ts = time.monotonic()
+        except Exception:
+            XAIClient._request_semaphore.release()
+            raise
 
     def _load_daily_tracker(self) -> DailyUsageTracker:
         """Load or create daily usage tracker."""
@@ -253,83 +273,86 @@ class XAIClient(TradingLoggerMixin):
         Implements intelligent query processing, caching, and fallbacks.
         """
         try:
-            # Process and optimize the search query
-            optimized_query = self._optimize_search_query(query)
-            
-            # Check cache first (simple in-memory cache)
-            if hasattr(self, '_search_cache'):
-                cache_key = f"{optimized_query[:50]}:{max_length}"
-                if cache_key in self._search_cache:
-                    self.logger.debug("Returning cached search result", query=optimized_query[:50])
-                    return self._search_cache[cache_key]
-            else:
-                self._search_cache = {}
-            
-            self.logger.debug(
-                "Starting xAI live search",
-                original_query=query[:50],
-                optimized_query=optimized_query[:50],
-                max_length=max_length
-            )
-            
-            # Use synchronous client for search to avoid async issues
-            from xai_sdk import Client
-            sync_client = Client(api_key=self.api_key)
-            
-            # Create chat with search parameters
-            chat = sync_client.chat.create(
-                model=self.primary_model,
-                search_parameters=SearchParameters(
-                    mode="auto",  # Let model decide when to search
-                    return_citations=True,  # Get source citations
-                ),
-                temperature=0.3,  # Lower temperature for more factual responses
-                max_tokens=min(2000, self.max_tokens)  # Higher limit for search
-            )
-            
-            # Create focused search prompt
-            search_prompt = self._create_search_prompt(optimized_query, max_length)
-            chat.append(xai_user(search_prompt))
-            
-            # Sample response (synchronous)
-            start_time = time.time()
+            await self._acquire_request_slot()
             try:
-                response = chat.sample()
-                processing_time = time.time() - start_time
+                # Process and optimize the search query
+                optimized_query = self._optimize_search_query(query)
                 
-                # Handle potential coroutine return (SDK bug)
-                if hasattr(response, '__await__'):
-                    # If it's a coroutine, await it
-                    response = await response
+                # Check cache first (simple in-memory cache)
+                if hasattr(self, '_search_cache'):
+                    cache_key = f"{optimized_query[:50]}:{max_length}"
+                    if cache_key in self._search_cache:
+                        self.logger.debug("Returning cached search result", query=optimized_query[:50])
+                        return self._search_cache[cache_key]
+                else:
+                    self._search_cache = {}
                 
-                # Check for valid response
-                if not response or not hasattr(response, 'content') or not response.content or not response.content.strip():
+                self.logger.debug(
+                    "Starting xAI live search",
+                    original_query=query[:50],
+                    optimized_query=optimized_query[:50],
+                    max_length=max_length
+                )
+                
+                # Use synchronous client for search to avoid async issues
+                from xai_sdk import Client
+                sync_client = Client(api_key=self.api_key)
+                
+                # Create chat with search parameters
+                chat = sync_client.chat.create(
+                    model=self.primary_model,
+                    search_parameters=SearchParameters(
+                        mode="auto",  # Let model decide when to search
+                        return_citations=True,  # Get source citations
+                    ),
+                    temperature=0.3,  # Lower temperature for more factual responses
+                    max_tokens=min(2000, self.max_tokens)  # Higher limit for search
+                )
+                
+                # Create focused search prompt
+                search_prompt = self._create_search_prompt(optimized_query, max_length)
+                chat.append(xai_user(search_prompt))
+                
+                # Sample response (synchronous)
+                start_time = time.time()
+                try:
+                    response = chat.sample()
+                    processing_time = time.time() - start_time
+                    
+                    # Handle potential coroutine return (SDK bug)
+                    if hasattr(response, '__await__'):
+                        # If it's a coroutine, await it
+                        response = await response
+                    
+                    # Check for valid response
+                    if not response or not hasattr(response, 'content') or not response.content or not response.content.strip():
+                        self.logger.warning(
+                            "Search returned empty result",
+                            query=optimized_query[:50],
+                            processing_time=processing_time
+                        )
+                        return self._get_fallback_context(query, max_length)
+                    
+                    # Process successful response
+                    search_result = self._process_search_response(response, query, processing_time, max_length)
+                    
+                    # Cache the result
+                    cache_key = f"{optimized_query[:50]}:{max_length}"
+                    if len(self._search_cache) < 100:  # Limit cache size
+                        self._search_cache[cache_key] = search_result
+                    
+                    return search_result
+                    
+                except Exception as sample_error:
                     self.logger.warning(
-                        "Search returned empty result",
+                        "Search sampling failed", 
                         query=optimized_query[:50],
-                        processing_time=processing_time
+                        error=str(sample_error),
+                        error_type=type(sample_error).__name__
                     )
                     return self._get_fallback_context(query, max_length)
-                
-                # Process successful response
-                search_result = self._process_search_response(response, query, processing_time, max_length)
-                
-                # Cache the result
-                cache_key = f"{optimized_query[:50]}:{max_length}"
-                if len(self._search_cache) < 100:  # Limit cache size
-                    self._search_cache[cache_key] = search_result
-                
-                return search_result
-                
-            except Exception as sample_error:
-                self.logger.warning(
-                    "Search sampling failed", 
-                    query=optimized_query[:50],
-                    error=str(sample_error),
-                    error_type=type(sample_error).__name__
-                )
-                return self._get_fallback_context(query, max_length)
-                
+            finally:
+                XAIClient._request_semaphore.release()
         except Exception as e:
             self.logger.warning(
                 "Live search failed, using fallback",
@@ -722,21 +745,27 @@ Required format:
         for attempt in range(max_retries):
             try:
                 start_time = time.time()
-                
-                # Use the official xAI SDK pattern from docs - NO search parameters for regular completions
-                chat = self.client.chat.create(
-                    model=model_to_use,
-                    temperature=temperature,
-                    max_tokens=max_tokens
-                )
-                
-                # Add all messages to the chat
-                for message in messages:
-                    chat.append(message)
-                
-                # Sample the response
-                response = await chat.sample()
-                response_content = response.content
+                acquired = False
+                try:
+                    await self._acquire_request_slot()
+                    acquired = True
+                    # Use the official xAI SDK pattern from docs - NO search parameters for regular completions
+                    chat = self.client.chat.create(
+                        model=model_to_use,
+                        temperature=temperature,
+                        max_tokens=max_tokens
+                    )
+                    
+                    # Add all messages to the chat
+                    for message in messages:
+                        chat.append(message)
+                    
+                    # Sample the response
+                    response = await chat.sample()
+                    response_content = response.content
+                finally:
+                    if acquired:
+                        XAIClient._request_semaphore.release()
                 
                 processing_time = time.time() - start_time
                 
