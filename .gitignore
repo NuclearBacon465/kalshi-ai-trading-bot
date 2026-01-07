@@ -204,4 +204,4 @@ dashboard_*.json
 # API keys and credentials
 api_keys.txt
 credentials.json
-secrets.yaml 
+secrets.yaml trading_system.db-journal
