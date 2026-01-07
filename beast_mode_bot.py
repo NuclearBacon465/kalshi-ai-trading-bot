@@ -58,9 +58,15 @@ class BeastModeBot:
     - Risk management and rebalancing
     """
     
-    def __init__(self, live_mode: bool = False, dashboard_mode: bool = False):
+    def __init__(
+        self,
+        live_mode: bool = False,
+        dashboard_mode: bool = False,
+        scan_interval_seconds: int = 60
+    ):
         self.live_mode = live_mode
         self.dashboard_mode = dashboard_mode
+        self.scan_interval_seconds = scan_interval_seconds
         self.logger = get_trading_logger("beast_mode_bot")
         self.shutdown_event = asyncio.Event()
         
@@ -91,6 +97,7 @@ class BeastModeBot:
             self.logger.info(f"📊 Trading Mode: {'LIVE' if self.live_mode else 'PAPER'}")
             self.logger.info(f"💰 Daily AI Budget: ${settings.trading.daily_ai_budget}")
             self.logger.info(f"⚡ Features: Market Making + Portfolio Optimization + Dynamic Exits")
+            self.logger.info(f"⏱️ Trading cycle interval: {self.scan_interval_seconds}s")
             
             # 🚨 CRITICAL FIX: Initialize database FIRST and wait for completion
             self.logger.info("🔧 Initializing database...")
@@ -203,12 +210,12 @@ class BeastModeBot:
                 else:
                     self.logger.info(f"📊 Cycle #{cycle_count} Complete - No new positions created")
                 
-                # Wait for next cycle (60 seconds)
-                await asyncio.sleep(60)
+                # Wait for next cycle
+                await asyncio.sleep(self.scan_interval_seconds)
                 
             except Exception as e:
                 self.logger.error(f"Error in trading cycle #{cycle_count}: {e}")
-                await asyncio.sleep(60)
+                await asyncio.sleep(self.scan_interval_seconds)
 
     async def _check_daily_ai_limits(self, xai_client: XAIClient) -> bool:
         """
@@ -333,6 +340,12 @@ Beast Mode Features:
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         help="Set the logging level (default: INFO)"
     )
+    parser.add_argument(
+        "--scan-interval-seconds",
+        type=int,
+        default=60,
+        help="Seconds between trading cycles (default: 60)"
+    )
     
     args = parser.parse_args()
     
@@ -346,7 +359,11 @@ Beast Mode Features:
         print("🚀 LIVE TRADING MODE CONFIRMED")
     
     # Create and run Beast Mode Bot
-    bot = BeastModeBot(live_mode=args.live, dashboard_mode=args.dashboard)
+    bot = BeastModeBot(
+        live_mode=args.live,
+        dashboard_mode=args.dashboard,
+        scan_interval_seconds=args.scan_interval_seconds
+    )
     await bot.run()
 
 

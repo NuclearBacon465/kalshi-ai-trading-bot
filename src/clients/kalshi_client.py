@@ -33,6 +33,11 @@ class KalshiClient(TradingLoggerMixin):
     Handles authentication, market data retrieval, and trade execution.
     """
     
+    _rate_semaphore = asyncio.Semaphore(5)
+    _rate_lock = asyncio.Lock()
+    _last_request_ts = 0.0
+    _min_request_interval = 0.35
+
     def __init__(
         self, 
         api_key: Optional[str] = None, 
@@ -66,6 +71,21 @@ class KalshiClient(TradingLoggerMixin):
         )
         
         self.logger.info("Kalshi client initialized", api_key_length=len(self.api_key) if self.api_key else 0)
+
+    async def _acquire_rate_limit(self) -> None:
+        """Acquire shared rate limit slot to reduce 429s."""
+        await KalshiClient._rate_semaphore.acquire()
+        try:
+            async with KalshiClient._rate_lock:
+                now = time.monotonic()
+                elapsed = now - KalshiClient._last_request_ts
+                wait_time = KalshiClient._min_request_interval - elapsed
+                if wait_time > 0:
+                    await asyncio.sleep(wait_time)
+                KalshiClient._last_request_ts = time.monotonic()
+        except Exception:
+            KalshiClient._rate_semaphore.release()
+            raise
     
     def _load_private_key(self) -> None:
         """Load private key from file."""
@@ -179,15 +199,19 @@ class KalshiClient(TradingLoggerMixin):
                     attempt=attempt + 1
                 )
                 
-                # Add aggressive delay between requests to prevent 429s
-                await asyncio.sleep(0.5)  # 500ms delay = max 2 requests/second
-                
-                response = await self.client.request(
-                    method=method,
-                    url=url,
-                    headers=headers,
-                    content=body if body else None
-                )
+                acquired = False
+                try:
+                    await self._acquire_rate_limit()
+                    acquired = True
+                    response = await self.client.request(
+                        method=method,
+                        url=url,
+                        headers=headers,
+                        content=body if body else None
+                    )
+                finally:
+                    if acquired:
+                        KalshiClient._rate_semaphore.release()
                 
                 response.raise_for_status()
                 return response.json()
