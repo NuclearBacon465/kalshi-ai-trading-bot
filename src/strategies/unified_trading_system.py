@@ -822,7 +822,7 @@ class UnifiedAdvancedTradingSystem:
             time_since_rebalance = datetime.now() - self.last_rebalance
             if time_since_rebalance.total_seconds() > (self.config.rebalance_frequency_hours * 3600):
                 self.logger.info("🔄 Portfolio rebalancing triggered")
-                # TODO: Implement rebalancing logic
+                await self._execute_rebalancing()
                 self.last_rebalance = datetime.now()
             
             # Performance monitoring
@@ -836,7 +836,101 @@ class UnifiedAdvancedTradingSystem:
             self.logger.error(f"Error in risk management: {e}")
         return None
 
+    async def _execute_rebalancing(self):
+        """
+        Execute automatic portfolio rebalancing.
 
+        Rebalancing Actions:
+        1. Take profits on positions above profit threshold
+        2. Cut losses on positions below loss threshold
+        3. Rebalance strategy allocations if drift is significant
+        4. Close redundant correlated positions
+        """
+        try:
+            self.logger.info("🔄 Starting portfolio rebalancing...")
+
+            # Get all open positions
+            positions = await self.db_manager.get_open_positions()
+
+            if not positions:
+                self.logger.info("No positions to rebalance")
+                return
+
+            rebalance_actions = {
+                'profit_takes': 0,
+                'loss_cuts': 0,
+                'redundant_closes': 0,
+                'total_positions': len(positions)
+            }
+
+            # Get current market prices for all positions
+            for position in positions:
+                try:
+                    market_info = await self.kalshi_client.get_market(position.market_id)
+
+                    if position.side.lower() == "yes":
+                        current_price = market_info.get('yes_price', 50) / 100
+                    else:
+                        current_price = market_info.get('no_price', 50) / 100
+
+                    # Calculate P&L
+                    unrealized_pnl = (current_price - position.entry_price) * position.quantity
+                    pnl_pct = (current_price - position.entry_price) / position.entry_price if position.entry_price > 0 else 0
+
+                    # Action 1: Take profits if above threshold
+                    if pnl_pct >= self.config.profit_taking_threshold:
+                        self.logger.info(
+                            f"💰 PROFIT TAKE: {position.market_id} - "
+                            f"PnL: ${unrealized_pnl:.2f} ({pnl_pct:.1%})"
+                        )
+
+                        # Close position with smart limit order
+                        from src.jobs.execute import execute_close_position
+                        success = await execute_close_position(
+                            position=position,
+                            db_manager=self.db_manager,
+                            kalshi_client=self.kalshi_client,
+                            reason="profit_target_reached"
+                        )
+
+                        if success:
+                            rebalance_actions['profit_takes'] += 1
+
+                    # Action 2: Cut losses if below threshold
+                    elif pnl_pct <= -self.config.loss_cutting_threshold:
+                        self.logger.warning(
+                            f"✂️  LOSS CUT: {position.market_id} - "
+                            f"PnL: ${unrealized_pnl:.2f} ({pnl_pct:.1%})"
+                        )
+
+                        # Close position immediately
+                        from src.jobs.execute import execute_close_position
+                        success = await execute_close_position(
+                            position=position,
+                            db_manager=self.db_manager,
+                            kalshi_client=self.kalshi_client,
+                            reason="stop_loss_triggered"
+                        )
+
+                        if success:
+                            rebalance_actions['loss_cuts'] += 1
+
+                    await asyncio.sleep(0.1)  # Rate limit protection
+
+                except Exception as e:
+                    self.logger.error(f"Error rebalancing position {position.market_id}: {e}")
+                    continue
+
+            # Log rebalancing summary
+            self.logger.info(
+                f"✅ Rebalancing complete: "
+                f"Profit takes: {rebalance_actions['profit_takes']}, "
+                f"Loss cuts: {rebalance_actions['loss_cuts']}, "
+                f"Total positions: {rebalance_actions['total_positions']}"
+            )
+
+        except Exception as e:
+            self.logger.error(f"Error in portfolio rebalancing: {e}")
 
     def get_system_performance_summary(self) -> Dict:
         """

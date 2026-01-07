@@ -269,6 +269,7 @@ async def test_trading_strategies():
 
     try:
         system = UnifiedAdvancedTradingSystem(db, kalshi, xai)
+        await system.async_initialize()  # Required to initialize market_maker and portfolio_optimizer
         log_test("Unified Trading System Init", "PASS")
 
         # Check strategy components
