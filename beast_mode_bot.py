@@ -112,33 +112,113 @@ class BeastModeBot:
             
             # Start market ingestion first
             self.logger.info("🔄 Starting market ingestion...")
-            ingestion_task = asyncio.create_task(self._run_market_ingestion(db_manager, kalshi_client))
+            market_ingestion_factory = lambda: asyncio.create_task(
+                self._run_market_ingestion(db_manager, kalshi_client),
+                name="market_ingestion",
+            )
+            ingestion_task = market_ingestion_factory()
             
             # Wait for initial market data ingestion
             await asyncio.sleep(10)
             
             # Run remaining background tasks
             self.logger.info("🚀 Starting trading and monitoring tasks...")
-            tasks = [
-                ingestion_task,  # Already started
-                asyncio.create_task(self._run_trading_cycles(db_manager, kalshi_client, xai_client)),
-                asyncio.create_task(self._run_position_tracking(db_manager, kalshi_client)),
-                asyncio.create_task(self._run_performance_evaluation(db_manager))
-            ]
+            task_factories = {
+                "market_ingestion": market_ingestion_factory,
+                "trading_cycles": lambda: asyncio.create_task(
+                    self._run_trading_cycles(db_manager, kalshi_client, xai_client),
+                    name="trading_cycles",
+                ),
+                "position_tracking": lambda: asyncio.create_task(
+                    self._run_position_tracking(db_manager, kalshi_client),
+                    name="position_tracking",
+                ),
+                "performance_evaluation": lambda: asyncio.create_task(
+                    self._run_performance_evaluation(db_manager),
+                    name="performance_evaluation",
+                ),
+            }
+            restart_counts = {name: 0 for name in task_factories}
+            tasks = {"market_ingestion": ingestion_task}
+            for name, factory in task_factories.items():
+                if name == "market_ingestion":
+                    continue
+                tasks[name] = factory()
             
             # Setup shutdown handler
             def signal_handler():
                 self.logger.info("🛑 Shutdown signal received")
                 self.shutdown_event.set()
-                for task in tasks:
+                for task in tasks.values():
                     task.cancel()
             
             # Handle Ctrl+C gracefully
             for sig in [signal.SIGINT, signal.SIGTERM]:
                 signal.signal(sig, lambda s, f: signal_handler())
             
-            # Wait for shutdown or completion
-            await asyncio.gather(*tasks, return_exceptions=True)
+            # Supervisor loop for task failures
+            while not self.shutdown_event.is_set():
+                if not tasks:
+                    self.logger.error("No active tasks remaining; initiating shutdown")
+                    self.shutdown_event.set()
+                    break
+                done, _ = await asyncio.wait(
+                    tasks.values(),
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for name, task in list(tasks.items()):
+                    if task not in done:
+                        continue
+
+                    if task.cancelled():
+                        self.logger.warning("Task %s was cancelled", name)
+                        del tasks[name]
+                        continue
+
+                    exception = task.exception()
+                    if exception:
+                        self.logger.error(
+                            "Task %s failed with an exception",
+                            name,
+                            exc_info=exception,
+                        )
+                    else:
+                        self.logger.warning("Task %s exited unexpectedly", name)
+
+                    del tasks[name]
+                    restart_counts[name] += 1
+                    if not settings.trading.restart_failed_tasks:
+                        self.logger.error(
+                            "Restart policy disabled; initiating shutdown after %s exit",
+                            name,
+                        )
+                        self.shutdown_event.set()
+                        break
+
+                    if restart_counts[name] > settings.trading.max_task_restarts:
+                        self.logger.error(
+                            "Task %s exceeded max restarts (%d); initiating shutdown",
+                            name,
+                            settings.trading.max_task_restarts,
+                        )
+                        self.shutdown_event.set()
+                        break
+
+                    delay = settings.trading.task_restart_delay_seconds
+                    if delay > 0:
+                        self.logger.info(
+                            "Restarting %s after %d seconds (attempt %d/%d)",
+                            name,
+                            delay,
+                            restart_counts[name],
+                            settings.trading.max_task_restarts,
+                        )
+                        await asyncio.sleep(delay)
+                    tasks[name] = task_factories[name]()
+
+            for task in tasks.values():
+                task.cancel()
+            await asyncio.gather(*tasks.values(), return_exceptions=True)
             
             await xai_client.close()
             await kalshi_client.close()

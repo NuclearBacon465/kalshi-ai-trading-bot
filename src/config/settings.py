@@ -90,6 +90,11 @@ class TradingConfig:
     enable_daily_cost_limiting: bool = True  # Enable daily cost limits
     sleep_when_limit_reached: bool = True  # Sleep until next day when limit reached
 
+    # Task restart policy for background supervisors
+    restart_failed_tasks: bool = True
+    max_task_restarts: int = 3
+    task_restart_delay_seconds: int = 5
+
     # Enhanced market filtering to reduce analyses - MORE PERMISSIVE
     min_volume_for_ai_analysis: float = 25.0  # DECREASED: Much lower threshold (was 50, now 25 for more opportunities)
     exclude_low_liquidity_categories: List[str] = field(default_factory=lambda: [
