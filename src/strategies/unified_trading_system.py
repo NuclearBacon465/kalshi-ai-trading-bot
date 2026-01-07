@@ -259,9 +259,10 @@ class UnifiedAdvancedTradingSystem:
             
             # Step 1: Get ALL available markets (no time restrictions) - MORE PERMISSIVE VOLUME
             markets = await self.db_manager.get_eligible_markets(
-            volume_min=200,  # DECREASED: Much lower volume requirement (was 50,000, now 200) for more opportunities
-            max_days_to_expiry=365  # Accept any timeline with dynamic exits
-        )
+                volume_min=200,  # DECREASED: Much lower volume requirement (was 50,000, now 200) for more opportunities
+                max_days_to_expiry=365  # Accept any timeline with dynamic exits
+            )
+            markets = self._filter_stale_markets(markets)
             if not markets:
                 self.logger.warning("No markets available for trading")
                 return TradingSystemResults()
@@ -303,6 +304,23 @@ class UnifiedAdvancedTradingSystem:
         except Exception as e:
             self.logger.error(f"Error in unified trading strategy: {e}")
             return TradingSystemResults()
+
+    def _filter_stale_markets(self, markets: List[Market], max_age_seconds: int = 30) -> List[Market]:
+        """Filter out stale markets and log rejections."""
+        now = datetime.now()
+        fresh_markets: List[Market] = []
+        for market in markets:
+            age_seconds = (now - market.last_updated).total_seconds()
+            if age_seconds > max_age_seconds:
+                self.logger.warning(
+                    "Skipping stale market data in unified trading system",
+                    market_id=market.market_id,
+                    age_seconds=round(age_seconds, 2),
+                    last_updated=market.last_updated.isoformat(),
+                )
+                continue
+            fresh_markets.append(market)
+        return fresh_markets
 
     async def _execute_market_making_strategy(self, markets: List[Market]) -> Dict:
         """
