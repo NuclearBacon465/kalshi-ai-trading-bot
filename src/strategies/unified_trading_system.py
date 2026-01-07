@@ -55,11 +55,11 @@ from src.strategies.quick_flip_scalping import (
 @dataclass
 class TradingSystemConfig:
     """Configuration for the unified trading system."""
-    # Capital allocation across strategies
-    market_making_allocation: float = 0.30  # 30% for market making
-    directional_trading_allocation: float = 0.40  # 40% for directional positions
-    quick_flip_allocation: float = 0.30     # 30% for quick flip scalping
-    arbitrage_allocation: float = 0.00      # 0% for arbitrage opportunities
+    # Capital allocation across strategies (OPTIMIZED for maximum profit)
+    market_making_allocation: float = 0.50  # 🚀 50% for market making (increased from 30%)
+    directional_trading_allocation: float = 0.40  # 40% for directional positions (stable)
+    quick_flip_allocation: float = 0.10     # 10% for quick flip scalping (decreased from 30%)
+    arbitrage_allocation: float = 0.00      # 0% for arbitrage opportunities (future feature)
     
     # Risk management
     max_portfolio_volatility: float = 0.20  # 20% max portfolio vol

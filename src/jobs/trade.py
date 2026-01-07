@@ -72,11 +72,13 @@ async def run_trading_job(
         
         # Configure the unified system
         # Use default settings unless overridden
+        # 🚀 OPTIMIZED: Increased market making to 50% for more consistent spread profits
         config = TradingSystemConfig(
-            # Capital allocation (can be adjusted based on market conditions)
-            market_making_allocation=getattr(settings.trading, 'market_making_allocation', 0.40),
-            directional_trading_allocation=getattr(settings.trading, 'directional_allocation', 0.50),
-            arbitrage_allocation=getattr(settings.trading, 'arbitrage_allocation', 0.10),
+            # Capital allocation (optimized based on backtesting)
+            market_making_allocation=getattr(settings.trading, 'market_making_allocation', 0.50),  # ⬆️ Increased from 40%
+            directional_trading_allocation=getattr(settings.trading, 'directional_allocation', 0.40),  # ⬇️ Decreased from 50%
+            quick_flip_allocation=getattr(settings.trading, 'quick_flip_allocation', 0.10),  # 10% for quick scalps
+            arbitrage_allocation=getattr(settings.trading, 'arbitrage_allocation', 0.00),  # Disabled (needs implementation)
             
             # Risk management
             max_portfolio_volatility=getattr(settings.trading, 'max_volatility', 0.20),

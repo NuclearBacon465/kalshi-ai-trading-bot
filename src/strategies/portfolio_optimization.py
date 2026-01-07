@@ -37,6 +37,9 @@ from src.clients.xai_client import XAIClient
 from src.config.settings import settings
 from src.utils.logging_setup import get_trading_logger
 
+# 🚀 ENHANCEMENT: Advanced position sizing with correlation and volatility
+from src.utils.advanced_position_sizing import AdvancedPositionSizer
+
 
 @dataclass
 class MarketOpportunity:
@@ -133,6 +136,9 @@ class AdvancedPortfolioOptimizer:
         self.historical_allocations = []
         self.realized_returns = []
         self.portfolio_metrics = {}
+
+        # 🚀 ENHANCEMENT: Advanced position sizing with correlation & volatility
+        self.position_sizer = AdvancedPositionSizer(db_manager)
 
     async def optimize_portfolio(
         self, 
