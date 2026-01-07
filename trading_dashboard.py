@@ -99,7 +99,11 @@ def load_performance_data():
             
             # Get LIVE positions from Kalshi API (not just database)
             positions_response = await kalshi_client.get_positions()
-            kalshi_positions = positions_response.get('market_positions', [])
+            kalshi_positions = (
+                positions_response.get('positions')
+                or positions_response.get('market_positions')
+                or []
+            )
             
             # Convert Kalshi positions to simple dictionaries for caching
             positions = []
@@ -135,6 +139,7 @@ def load_performance_data():
                     
                     positions.append(position_dict)
             
+            await kalshi_client.close()
             await db_manager.close()
             
             return performance, positions
@@ -204,48 +209,55 @@ def load_system_health():
         kalshi_client = KalshiClient()
         
         async def get_health():
-            # Get available cash
-            balance_response = await kalshi_client.get_balance()
-            available_cash = balance_response.get('balance', 0) / 100
-            
-            # Get current positions to calculate total portfolio value
-            positions_response = await kalshi_client.get_positions()
-            market_positions = positions_response.get('market_positions', [])
-            
-            total_position_value = 0
-            positions_count = len(market_positions)
-            
-            # Calculate current value of all positions
-            for position in market_positions:
-                try:
-                    ticker = position.get('ticker')
-                    position_count = position.get('position', 0)
-                    
-                    if ticker and position_count != 0:
-                        # Get current market data
-                        market_data = await kalshi_client.get_market(ticker)
-                        if market_data and 'market' in market_data:
-                            market_info = market_data['market']
-                            
-                            # Determine if this is a YES or NO position and get current price
-                            # For Kalshi, positive position = YES, negative = NO
-                            if position_count > 0:  # YES position
-                                current_price = market_info.get('yes_price', 50) / 100
-                            else:  # NO position  
-                                current_price = market_info.get('no_price', 50) / 100
-                            
-                            position_value = abs(position_count) * current_price
-                            total_position_value += position_value
-                            
-                except Exception as e:
-                    # If we can't get market data for a position, skip it
-                    print(f"Warning: Could not value position {ticker}: {e}")
-                    continue
-            
-            # Total portfolio value = cash + position values
-            total_portfolio_value = available_cash + total_position_value
-            
-            return available_cash, total_portfolio_value, positions_count, total_position_value
+            try:
+                # Get available cash
+                balance_response = await kalshi_client.get_balance()
+                available_cash = balance_response.get('balance', 0) / 100
+                
+                # Get current positions to calculate total portfolio value
+                positions_response = await kalshi_client.get_positions()
+                market_positions = (
+                    positions_response.get('positions')
+                    or positions_response.get('market_positions')
+                    or []
+                )
+                
+                total_position_value = 0
+                positions_count = len(market_positions)
+                
+                # Calculate current value of all positions
+                for position in market_positions:
+                    try:
+                        ticker = position.get('ticker')
+                        position_count = position.get('position', 0)
+                        
+                        if ticker and position_count != 0:
+                            # Get current market data
+                            market_data = await kalshi_client.get_market(ticker)
+                            if market_data and 'market' in market_data:
+                                market_info = market_data['market']
+                                
+                                # Determine if this is a YES or NO position and get current price
+                                # For Kalshi, positive position = YES, negative = NO
+                                if position_count > 0:  # YES position
+                                    current_price = market_info.get('yes_price', 50) / 100
+                                else:  # NO position  
+                                    current_price = market_info.get('no_price', 50) / 100
+                                
+                                position_value = abs(position_count) * current_price
+                                total_position_value += position_value
+                                
+                    except Exception as e:
+                        # If we can't get market data for a position, skip it
+                        print(f"Warning: Could not value position {ticker}: {e}")
+                        continue
+                
+                # Total portfolio value = cash + position values
+                total_portfolio_value = available_cash + total_position_value
+                
+                return available_cash, total_portfolio_value, positions_count, total_position_value
+            finally:
+                await kalshi_client.close()
         
         available_cash, total_portfolio_value, positions_count, position_value = loop.run_until_complete(get_health())
         loop.close()

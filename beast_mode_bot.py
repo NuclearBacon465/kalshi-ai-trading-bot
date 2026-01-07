@@ -33,6 +33,7 @@ from src.jobs.track import run_tracking
 from src.jobs.evaluate import run_evaluation
 from src.utils.logging_setup import setup_logging, get_trading_logger
 from src.utils.database import DatabaseManager
+from src.utils.risk_cooldown import is_risk_cooldown_active
 from src.clients.kalshi_client import KalshiClient
 from src.clients.xai_client import XAIClient
 from src.config.settings import settings
@@ -168,9 +169,9 @@ class BeastModeBot:
             try:
                 # Create a queue for market ingestion (though we're not using it in Beast Mode)
                 market_queue = asyncio.Queue()
-                # ✅ FIXED: Pass the shared database manager
-                await run_ingestion(db_manager, market_queue)
-                await asyncio.sleep(30)  # ⚡ OPTIMIZED: Run every 30 seconds for 10x faster opportunity detection
+                # ✅ FIXED: Pass the shared database manager and kalshi_client
+                await run_ingestion(db_manager, market_queue, kalshi_client=kalshi_client)
+                await asyncio.sleep(300)  # Run every 5 minutes (slower to prevent 429s)
             except Exception as e:
                 self.logger.error(f"Error in market ingestion: {e}")
                 await asyncio.sleep(60)
@@ -181,6 +182,19 @@ class BeastModeBot:
         
         while not self.shutdown_event.is_set():
             try:
+                cooldown_active, cooldown_state = is_risk_cooldown_active(db_manager.db_path)
+                if cooldown_active and cooldown_state:
+                    remaining = cooldown_state.cooldown_until - datetime.now()
+                    remaining_seconds = max(0, int(remaining.total_seconds()))
+                    self.logger.warning(
+                        "🛑 Risk cooldown active",
+                        cooldown_until=cooldown_state.cooldown_until.isoformat(),
+                        violations=cooldown_state.violations,
+                        remaining_seconds=remaining_seconds
+                    )
+                    await self._sleep_with_shutdown(remaining_seconds or 60)
+                    continue
+
                 # Check daily AI cost limits before starting cycle
                 if not await self._check_daily_ai_limits(xai_client):
                     # Sleep until next day if limits reached
@@ -193,7 +207,11 @@ class BeastModeBot:
                     self.logger.info(f"⚡ Beast Mode HIGH-FREQUENCY Cycle #{cycle_count} (2s intervals)")
                 
                 # Run the Beast Mode unified trading system
-                results = await run_trading_job()
+                results = await run_trading_job(
+                    db_manager=db_manager,
+                    kalshi_client=kalshi_client,
+                    xai_client=xai_client
+                )
                 
                 if results and results.total_positions > 0:
                     self.logger.info(
@@ -264,6 +282,17 @@ class BeastModeBot:
         else:
             # Safety fallback
             await asyncio.sleep(60)
+
+    async def _sleep_with_shutdown(self, sleep_seconds: int):
+        """Sleep in chunks to allow graceful shutdown."""
+        if sleep_seconds <= 0:
+            return
+        chunk_size = 60
+        remaining = sleep_seconds
+        while remaining > 0 and not self.shutdown_event.is_set():
+            current_chunk = min(chunk_size, remaining)
+            await asyncio.sleep(current_chunk)
+            remaining -= current_chunk
 
     async def _run_position_tracking(self, db_manager: DatabaseManager, kalshi_client: KalshiClient):
         """Background task for position tracking and exit strategies."""
@@ -358,4 +387,4 @@ if __name__ == "__main__":
         print("\n👋 Beast Mode Bot stopped by user")
     except Exception as e:
         print(f"❌ Beast Mode Bot error: {e}")
-        raise 
+        raise

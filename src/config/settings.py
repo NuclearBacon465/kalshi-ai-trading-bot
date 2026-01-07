@@ -28,6 +28,7 @@ class TradingConfig:
     """Trading strategy configuration."""
     # Position sizing and risk management - MADE MORE AGGRESSIVE  
     max_position_size_pct: float = 50.0  # INCREASED: Back to 5% per position (was 3%)
+    max_position_size_usd: float = 1000.0  # Absolute USD cap per position
     max_portfolio_exposure_pct: float = 90.0  # allow up to 90% deployed across open positions
     max_daily_loss_pct: float = 50.0    # INCREASED: Allow 15% daily loss (was 10%) 
     max_positions: int = 30              # INCREASED: Allow 15 concurrent positions (was 10)
@@ -46,6 +47,7 @@ class TradingConfig:
     fallback_model: str = "grok-3"  # Fallback to available model
     ai_temperature: float = 0  # Lower temperature for more consistent JSON output
     ai_max_tokens: int = 8000    # Reasonable limit for reasoning models (grok-4 works better with 8000)
+    ai_requests_per_minute: int = 60  # Per-minute request limit for AI calls
     
     # Position sizing (LEGACY - now using Kelly-primary approach)
     default_position_size: float = 3.0  # REDUCED: Now using Kelly Criterion as primary method (was 5%, now 3%)
@@ -97,6 +99,7 @@ class TradingConfig:
     # === EXECUTION MODES (strategies read these) ===
     live_trading_enabled: bool = True      # MUST be True to actually send orders
     paper_trading_mode: bool = False      # True = simulate only
+    kill_switch_enabled: bool = False     # Emergency stop for all trading
     
     # === PORTFOLIO / STRATEGY SETTINGS (code references settings.trading.*) ===
     total_capital: Optional[float] = None  # None = use live Kalshi balance
