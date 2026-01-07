@@ -1,10 +1,244 @@
+
+hi
+
+2:41 PM
+Hi there! How can I help you today?
+
+
+""" Database manager for the Kalshi trading system. """ import aiosqlite import json from dataclasses import dataclass, asdict from datetime import datetime, timedelta from pathlib import Path from typing import Optional, List, Dict from src.utils.logging_setup import TradingLoggerMixin @datacla
+
+pasted
+
+please fix code
+
+2:41 PM
+I can see there are git merge conflicts in this file. Let me fix them by resolving the conflicts and keeping the best parts of both versions.
+
+
+Creating fixed database.py with merge conflicts resolved
+database.py
+
+Presented file
+I've fixed the merge conflicts in your code. The main changes were:
+
+Removed git merge conflict markers (<<<<<<< codex/add-failure-counter-and-safe-mode-to-databasemanager, =======, >>>>>>> main)
+Kept the safe mode functionality from the codex branch (the _load_state, _save_state, is_safe_mode, get_safe_mode_state, record_failure, and reset_safe_mode methods)
+Kept the cleaner _run_migrations method from the main branch (which was more consolidated)
+Kept the close method and __main__ block from the main branch
+Fixed the duplicate close method issue - there was one defined twice
+Database
+PY 
+
+""" Database manager for the Kalshi trading system. """ import aiosqlite import json from dataclasses import dataclass, asdict from datetime import datetime, timedelta from pathlib import Path from typing import Optional, List, Dict from src.utils.logging_setup import TradingLoggerMixin @datacla
+
+pasted
+
+same for this
+
+2:45 PM
+I can see another git merge conflict at the end of this file. Let me fix it:
+
+
+Creating fixed database.py with merge conflict resolved - keeping the close method and __main__ block from main branch
+database_fixed.py
+
+Presented file
+Fixed! The merge conflict was at the end of the file. I removed the conflict markers and kept:
+
+The close() method from the main branch
+The if __name__ == "__main__": block for standalone database initialization
+This version also includes the stale market data filtering logic from the codex/implement-last_updated-timestamps-and-filtering branch in the get_eligible_markets() method (with max_recency_seconds = 30).
+
+Database fixed
+PY 
+
+""" Unified Advanced Trading System - The Beast Mode 🚀 This system orchestrates all cutting-edge strategies: 1. Market Making Strategy (limit orders for spreads) 2. Advanced Portfolio Optimization (Kelly Criterion Extension) 3. Risk Parity Allocation (equal risk, not equal capital) 4. Dynamic Exit
+
+pasted
+
+fix
+
+2:57 PM
+I can see merge conflicts in this file. Let me fix them:
+
+
+1 step
+
+Remove existing file to recreate it
+
+
+Creating fixed unified_trading_system.py with merge conflicts resolved
+
+#!/usr/bin/env python3 """ Beast Mode Trading Bot 🚀 Main entry point for the Unified Advanced Trading System that orchestrates: - Market Making Strategy (40% allocation) - Directional Trading with Portfolio Optimization (50% allocation) - Arbitrage Detection (10% allocation) Features: - No time
+
+pasted
+
+
+""" XAI client for AI-powered trading decisions. Interfaces with Grok models through xAI REST API (OpenAI-compatible) for market analysis and trading strategies. """ import asyncio import json import time from typing import Dict, List, Optional, Any, Union, Tuple from dataclasses import dataclass f
+
+pasted
+
+
+""" Trade Execution Job This job takes a position and executes it as a trade. """ import asyncio import uuid from datetime import datetime from typing import Optional, Dict from src.utils.database import DatabaseManager, Position from src.utils.logging_setup import get_trading_logger from src.util
+
+pasted
+
+fix ALL
+
+3:04 PM
+
+Identified and resolved merge conflicts across three files.
+
+
+I'll fix all three files with merge conflicts.
+
+
+4 steps
+
+Creating fixed execute.py with merge conflicts resolved - combining notification support with fill verification
+execute.py
+
+I also realized I need to complete the unified_trading_system.py file that got cut off.
+
+Now let me present all the fixed files:
+
+
+4 steps
+
+Check if unified_trading_system.py was properly created
+
+
+
+Diagnosed file creation failure and resolved implementation.
+
+Let me complete the unified_trading_system.py file which got truncated:
+
+
+4 steps
+
+Presented 5 files
+
+Resolved merge conflicts and synthesized comprehensive changes.
+
+All files fixed! Here's a summary of the merge conflict resolutions:
+
+1. beast_mode_bot.py
+Fixed the _run_market_ingestion method to pass kalshi_client to run_ingestion()
+Kept the slower 300-second (5 minute) ingestion interval to prevent 429 rate limit errors
+2. xai_client.py
+Fixed the search() method to use REST API chat completion instead of the gRPC SDK
+Added the search cache initialization in __init__
+Kept the simpler approach while preserving query optimization and caching functionality
+3. execute.py
+Combined notification support (from one branch) with fill verification via backoff (from the other)
+Order flow now: place order → fetch fills with backoff → verify fill → send notifications
+Falls back to entry price if fills aren't confirmed, but still sends notifications
+4. unified_trading_system.py
+Combined market_data_max_age_seconds config and risk_cooldown_minutes config
+Removed duplicate stale market filtering (now handled in get_eligible_markets)
+Simplified the strategy execution while keeping all functionality
+5. database_fixed.py
+Kept safe mode functionality (_load_state, _save_state, is_safe_mode, etc.)
+Kept the stale market filtering in get_eligible_markets()
+Included the close() method and __main__ block
+Beast mode bot
+PY 
+Xai client
+PY 
+Execute
+PY 
+Unified trading system
+PY 
+Database fixed
+PY 
+1767817178838_image.png
+
+#!/usr/bin/env python3 """ Beast Mode Trading Bot 🚀 Main entry point for the Unified Advanced Trading System that orchestrates: - Market Making Strategy (40% allocation) - Directional Trading with Portfolio Optimization (50% allocation) - Arbitrage Detection (10% allocation) Features: - No time
+
+pasted
+
+
+""" Database manager for the Kalshi trading system. """ import aiosqlite import json from dataclasses import dataclass, asdict from datetime import datetime, timedelta from pathlib import Path from typing import Optional, List, Dict from src.utils.logging_setup import TradingLoggerMixin @datacla
+
+pasted
+
+many pr's codex has done but before i updated your changes, help me fix all these pr's please, thank you!!!! there many be multipe of same
+
+3:19 PM
+
+Analyzed merge conflicts across multiple files and reconciled divergent code branches.
+
+
+
+
+
+
+
+
+
+I see PR #20 has conflicts in both beast_mode_bot.py and database.py. Let me fix both files by combining the features from both branches.
+
+
+Hide steps
+
+Creating fixed beast_mode_bot.py - combining Order sync features from codex branch with risk_cooldown from main
+beast_mode_bot_pr20.py
+
+Reconciled conflicting code branches to preserve all functionality.
+
+
+Creating fixed database.py - combining Order dataclass and methods from codex with close() and __main__ from main
+database_pr20.py
+
+Prepared to present files for user review.
+
+
+Presented 2 files
+
+Resolved conflicting files across multiple pull requests.
+
+Fixed PR #20! Here's what I merged:
+
+beast_mode_bot_pr20.py
+Combined both branches:
+
+✅ From codex branch: Order import, _sync_startup_state(), _normalize_order(), _parse_timestamp(), _cancel_stale_orders(), _get_price_reference(), orders table check in _ensure_database_ready()
+✅ From main branch: is_risk_cooldown_active import and risk cooldown check in _run_trading_cycles()
+✅ Fixed trailing whitespace on raise
+database_pr20.py
+Combined both branches:
+
+✅ From codex branch: Order dataclass, upsert_orders(), update_order_status(), orders table creation
+✅ From main branch: close() method and if __name__ == "__main__": block
+To use these files: Simply rename them to replace the originals:
+
+beast_mode_bot_pr20.py → beast_mode_bot.py
+database_pr20.py → src/utils/database.py
+Do you have more PRs with conflicts to fix? If so, please share them and I'll resolve those too!
+
+Beast mode bot pr20
+PY 
+Database pr20
+PY 
+
+
+
+
+
+
+Claude is AI and can make mistakes. Please double-check responses.
+Database pr20 · PY
+Copy
+
 """
 Database manager for the Kalshi trading system.
 """
 
 import aiosqlite
+import json
 from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Optional, List, Dict
 
 from src.utils.logging_setup import TradingLoggerMixin
@@ -98,9 +332,16 @@ class LLMQuery:
 class DatabaseManager(TradingLoggerMixin):
     """Manages database operations for the trading system."""
 
-    def __init__(self, db_path: str = "trading_system.db"):
+    def __init__(
+        self,
+        db_path: str = "trading_system.db",
+        state_path: str = "trading_state.json",
+        failure_threshold: int = 3
+    ):
         """Initialize database connection."""
         self.db_path = db_path
+        self.state_path = Path(state_path)
+        self.failure_threshold = failure_threshold
         self.logger.info("Initializing database manager", db_path=db_path)
 
     async def initialize(self) -> None:
@@ -111,54 +352,60 @@ class DatabaseManager(TradingLoggerMixin):
             await db.commit()
         self.logger.info("Database initialized successfully")
 
-    async def _run_migrations(self, db: aiosqlite.Connection) -> None:
-        """Run database migrations for schema updates."""
+    def _load_state(self) -> Dict:
+        if not self.state_path.exists():
+            return {
+                "failure_count": 0,
+                "safe_mode": False,
+                "last_failure_at": None,
+                "last_failure_reason": None,
+                "manual_reset_at": None
+            }
         try:
-            # Migration 1: Add strategy column to positions table
-            cursor = await db.execute("PRAGMA table_info(positions)")
-            columns = await cursor.fetchall()
-            column_names = [col[1] for col in columns]
-            
-            if 'strategy' not in column_names:
-                self.logger.info("Adding strategy column to positions table")
-                await db.execute("ALTER TABLE positions ADD COLUMN strategy TEXT")
-            
-            # Migration 2: Add strategy column to trade_logs table
-            cursor = await db.execute("PRAGMA table_info(trade_logs)")
-            columns = await cursor.fetchall()
-            column_names = [col[1] for col in columns]
-            
-            if 'strategy' not in column_names:
-                self.logger.info("Adding strategy column to trade_logs table")
-                await db.execute("ALTER TABLE trade_logs ADD COLUMN strategy TEXT")
-            
-            # Migration 3: Add LLM queries table if it doesn't exist
-            cursor = await db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='llm_queries'")
-            table_exists = await cursor.fetchone()
-            
-            if not table_exists:
-                self.logger.info("Creating llm_queries table")
-                await db.execute("""
-                    CREATE TABLE llm_queries (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        timestamp TEXT NOT NULL,
-                        strategy TEXT NOT NULL,
-                        query_type TEXT NOT NULL,
-                        market_id TEXT,
-                        prompt TEXT NOT NULL,
-                        response TEXT NOT NULL,
-                        tokens_used INTEGER,
-                        cost_usd REAL,
-                        confidence_extracted REAL,
-                        decision_extracted TEXT
-                    )
-                """)
-                
-                            # Migration 4: Update existing positions with strategy based on rationale
-            await self._migrate_existing_strategy_data(db)
-            
-        except Exception as e:
-            self.logger.error(f"Error running migrations: {e}")
+            return json.loads(self.state_path.read_text())
+        except json.JSONDecodeError:
+            self.logger.error("Failed to decode trading state file; resetting state", state_path=str(self.state_path))
+            return {
+                "failure_count": 0,
+                "safe_mode": False,
+                "last_failure_at": None,
+                "last_failure_reason": None,
+                "manual_reset_at": None
+            }
+
+    def _save_state(self, state: Dict) -> None:
+        self.state_path.write_text(json.dumps(state, indent=2, sort_keys=True))
+
+    def is_safe_mode(self) -> bool:
+        state = self._load_state()
+        return bool(state.get("safe_mode", False))
+
+    def get_safe_mode_state(self) -> Dict:
+        return self._load_state()
+
+    def record_failure(self, reason: str) -> None:
+        state = self._load_state()
+        state["failure_count"] = int(state.get("failure_count", 0)) + 1
+        state["last_failure_at"] = datetime.now().isoformat()
+        state["last_failure_reason"] = reason
+        if state["failure_count"] >= self.failure_threshold:
+            if not state.get("safe_mode"):
+                self.logger.warning(
+                    "Safe mode enabled due to repeated failures",
+                    failure_count=state["failure_count"],
+                    failure_threshold=self.failure_threshold,
+                    reason=reason
+                )
+            state["safe_mode"] = True
+        self._save_state(state)
+
+    def reset_safe_mode(self) -> None:
+        state = self._load_state()
+        state["failure_count"] = 0
+        state["safe_mode"] = False
+        state["manual_reset_at"] = datetime.now().isoformat()
+        self._save_state(state)
+        self.logger.info("Safe mode reset manually", state_path=str(self.state_path))
 
     async def _migrate_existing_strategy_data(self, db: aiosqlite.Connection) -> None:
         """Migrate existing position data to include strategy information."""
@@ -363,38 +610,68 @@ class DatabaseManager(TradingLoggerMixin):
         await db.execute("CREATE INDEX IF NOT EXISTS idx_market_analyses_timestamp ON market_analyses(analysis_timestamp)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_daily_cost_date ON daily_cost_tracking(date)")
         
-        # Run migrations to ensure schema is up to date
-        await self._run_migrations(db)
-        
         self.logger.info("Tables created or already exist.")
 
     async def _run_migrations(self, db: aiosqlite.Connection) -> None:
         """Run database migrations to ensure schema is up to date."""
         try:
-            # Check if positions table has the new columns
             cursor = await db.execute("PRAGMA table_info(positions)")
             columns = await cursor.fetchall()
             column_names = [col[1] for col in columns]
-            
-            # Add missing columns for enhanced exit strategy
+
+            if 'strategy' not in column_names:
+                self.logger.info("Adding strategy column to positions table")
+                await db.execute("ALTER TABLE positions ADD COLUMN strategy TEXT")
+
             if 'stop_loss_price' not in column_names:
                 await db.execute("ALTER TABLE positions ADD COLUMN stop_loss_price REAL")
                 self.logger.info("Added stop_loss_price column to positions table")
-                
+
             if 'take_profit_price' not in column_names:
                 await db.execute("ALTER TABLE positions ADD COLUMN take_profit_price REAL")
                 self.logger.info("Added take_profit_price column to positions table")
-                
+
             if 'max_hold_hours' not in column_names:
                 await db.execute("ALTER TABLE positions ADD COLUMN max_hold_hours INTEGER")
                 self.logger.info("Added max_hold_hours column to positions table")
-                
+
             if 'target_confidence_change' not in column_names:
                 await db.execute("ALTER TABLE positions ADD COLUMN target_confidence_change REAL")
                 self.logger.info("Added target_confidence_change column to positions table")
-                
+
+            cursor = await db.execute("PRAGMA table_info(trade_logs)")
+            columns = await cursor.fetchall()
+            trade_column_names = [col[1] for col in columns]
+
+            if 'strategy' not in trade_column_names:
+                self.logger.info("Adding strategy column to trade_logs table")
+                await db.execute("ALTER TABLE trade_logs ADD COLUMN strategy TEXT")
+
+            cursor = await db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='llm_queries'")
+            table_exists = await cursor.fetchone()
+
+            if not table_exists:
+                self.logger.info("Creating llm_queries table")
+                await db.execute("""
+                    CREATE TABLE llm_queries (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        timestamp TEXT NOT NULL,
+                        strategy TEXT NOT NULL,
+                        query_type TEXT NOT NULL,
+                        market_id TEXT,
+                        prompt TEXT NOT NULL,
+                        response TEXT NOT NULL,
+                        tokens_used INTEGER,
+                        cost_usd REAL,
+                        confidence_extracted REAL,
+                        decision_extracted TEXT
+                    )
+                """)
+
+            await self._migrate_existing_strategy_data(db)
+
             await db.commit()
-            
+
         except Exception as e:
             self.logger.error(f"Error running migrations: {e}")
 
@@ -503,8 +780,10 @@ class DatabaseManager(TradingLoggerMixin):
         Returns:
             A list of eligible markets.
         """
-        now_ts = int(datetime.now().timestamp())
+        now = datetime.now()
+        now_ts = int(now.timestamp())
         max_expiry_ts = now_ts + (max_days_to_expiry * 24 * 60 * 60)
+        max_recency_seconds = 30
 
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
@@ -519,6 +798,37 @@ class DatabaseManager(TradingLoggerMixin):
             """, (volume_min, now_ts, max_expiry_ts))
             rows = await cursor.fetchall()
             
+            markets = []
+            for row in rows:
+                market_dict = dict(row)
+                market_dict['last_updated'] = datetime.fromisoformat(market_dict['last_updated'])
+                market = Market(**market_dict)
+                age_seconds = (now - market.last_updated).total_seconds()
+                if age_seconds > max_recency_seconds:
+                    self.logger.warning(
+                        "Skipping stale market data",
+                        market_id=market.market_id,
+                        age_seconds=round(age_seconds, 2),
+                        last_updated=market.last_updated.isoformat(),
+                    )
+                    continue
+                markets.append(market)
+            return markets
+
+    async def get_active_markets(self) -> List[Market]:
+        """
+        Get all active markets from the database.
+
+        Returns:
+            List of active markets
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("""
+                SELECT * FROM markets WHERE status = 'active'
+            """)
+            rows = await cursor.fetchall()
+
             markets = []
             for row in rows:
                 market_dict = dict(row)
@@ -913,13 +1223,6 @@ class DatabaseManager(TradingLoggerMixin):
             self.logger.error(f"Error getting LLM stats: {e}")
             return {}
 
-    async def close(self):
-        """Close database connections (no-op for aiosqlite)."""
-        # aiosqlite doesn't require explicit closing of connections
-        # since we use context managers, but we provide this method
-        # for compatibility with other code that expects it
-        pass
-
     async def record_market_analysis(
         self, 
         market_id: str, 
@@ -1061,6 +1364,7 @@ class DatabaseManager(TradingLoggerMixin):
     async def get_open_positions(self) -> List[Position]:
         """Get all open positions."""
         async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
             cursor = await db.execute(
                 "SELECT * FROM positions WHERE status = 'open'"
             )
@@ -1068,23 +1372,22 @@ class DatabaseManager(TradingLoggerMixin):
             
             positions = []
             for row in rows:
-                # Convert database row to Position object
-                position = Position(
-                    market_id=row[1],
-                    side=row[2],
-                    entry_price=row[3],
-                    quantity=row[4],
-                    timestamp=datetime.fromisoformat(row[5]),
-                    rationale=row[6],
-                    confidence=row[7],
-                    live=bool(row[8]),
-                    status=row[9],
-                    id=row[0],
-                    stop_loss_price=row[10],
-                    take_profit_price=row[11],
-                    max_hold_hours=row[12],
-                    target_confidence_change=row[13]
-                )
-                positions.append(position)
+                position_dict = dict(row)
+                position_dict['timestamp'] = datetime.fromisoformat(position_dict['timestamp'])
+                positions.append(Position(**position_dict))
             
             return positions
+
+    async def close(self) -> None:
+        """Close database connections (no-op for aiosqlite)."""
+        return None
+
+
+if __name__ == "__main__":
+    import asyncio
+
+    async def _init_db():
+        manager = DatabaseManager()
+        await manager.initialize()
+
+    asyncio.run(_init_db())
