@@ -20,6 +20,7 @@ from cryptography.hazmat.primitives.asymmetric import padding
 
 from src.config.settings import settings
 from src.utils.logging_setup import TradingLoggerMixin
+from src.utils.health import record_failure
 
 
 class KalshiAPIError(Exception):
@@ -194,6 +195,7 @@ class KalshiClient(TradingLoggerMixin):
                 
             except httpx.HTTPStatusError as e:
                 last_exception = e
+                record_failure("kalshi")
                 # Rate limit (429) or server errors (5xx) are worth retrying
                 if e.response.status_code == 429 or e.response.status_code >= 500:
                     sleep_time = self.backoff_factor * (2 ** attempt)
@@ -210,6 +212,7 @@ class KalshiClient(TradingLoggerMixin):
                     raise KalshiAPIError(error_msg)
             except Exception as e:
                 last_exception = e
+                record_failure("kalshi")
                 self.logger.warning(f"Request failed with general exception. Retrying...", error=str(e), endpoint=endpoint)
                 sleep_time = self.backoff_factor * (2 ** attempt)
                 await asyncio.sleep(sleep_time)

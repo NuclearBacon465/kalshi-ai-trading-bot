@@ -36,6 +36,7 @@ from src.utils.database import DatabaseManager
 from src.clients.kalshi_client import KalshiClient
 from src.clients.xai_client import XAIClient
 from src.config.settings import settings
+from src.utils.health import is_safe_mode_active
 
 # Import Beast Mode components
 from src.strategies.unified_trading_system import run_unified_trading_system, TradingSystemConfig
@@ -181,6 +182,11 @@ class BeastModeBot:
         
         while not self.shutdown_event.is_set():
             try:
+                if is_safe_mode_active():
+                    self.logger.warning("🛑 Safe mode active - trading cycle paused")
+                    await asyncio.sleep(60)
+                    continue
+
                 # Check daily AI cost limits before starting cycle
                 if not await self._check_daily_ai_limits(xai_client):
                     # Sleep until next day if limits reached

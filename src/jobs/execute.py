@@ -12,6 +12,7 @@ from src.utils.database import DatabaseManager, Position
 from src.config.settings import settings
 from src.utils.logging_setup import get_trading_logger
 from src.clients.kalshi_client import KalshiClient, KalshiAPIError
+from src.utils.health import is_safe_mode_active
 
 async def execute_position(
     position: Position, 
@@ -33,6 +34,11 @@ async def execute_position(
     """
     logger = get_trading_logger("trade_execution")
     logger.info(f"Executing position for market: {position.market_id}")
+
+    if is_safe_mode_active():
+        logger.warning("Safe mode active - blocking trade execution", market_id=position.market_id)
+        await db_manager.update_position_status(position.id, "voided")
+        return False
 
     if live_mode:
         try:
