@@ -468,6 +468,13 @@ class UnifiedAdvancedTradingSystem:
         
         try:
             from src.jobs.execute import execute_position
+            from src.config.settings import settings
+            from src.utils.position_limits import get_max_position_size
+
+            max_position_size_usd = getattr(settings.trading, "max_position_size_usd", None)
+            max_position_size_pct_value = await get_max_position_size(
+                self.db_manager, self.kalshi_client
+            )
             
             for market_id, allocation_fraction in allocation.allocations.items():
                 try:

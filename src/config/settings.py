@@ -112,6 +112,7 @@ class TradingConfig:
 
     min_position_size: float = 2.0         # allow tiny test trades
     max_position_size: float = 1000.0      # high cap; % caps usually bind first
+    max_position_size_usd: float = 1000.0  # absolute USD cap per position
 
     max_concurrent_markets: int = 50
     ev_threshold: float = 0.01             # lower = more trades

@@ -219,6 +219,11 @@ class QuickFlipScalpingStrategy:
             )
         
         # Calculate position size
+        max_position_usd = getattr(settings.trading, "max_position_size_usd", None)
+        max_trade_capital = self.config.capital_per_trade
+        if max_position_usd is not None:
+            max_trade_capital = min(max_trade_capital, max_position_usd)
+
         quantity = min(
             self.config.max_position_size,
             int(effective_trade_value / (current_price / 100))
