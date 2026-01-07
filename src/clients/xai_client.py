@@ -190,6 +190,9 @@ class XAIClient(TradingLoggerMixin):
             daily_cost=self.daily_tracker.total_cost,
             requests_today=self.daily_tracker.request_count
         )
+
+        if self.db_manager:
+            self.db_manager.record_failure(f"xAI resource exhausted: {error_msg}")
         
         # Mark API as exhausted
         self.is_api_exhausted = True

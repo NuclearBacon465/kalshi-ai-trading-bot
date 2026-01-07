@@ -28,6 +28,7 @@ class TradingConfig:
     """Trading strategy configuration."""
     # Position sizing and risk management - MADE MORE AGGRESSIVE  
     max_position_size_pct: float = 50.0  # INCREASED: Back to 5% per position (was 3%)
+    max_position_size_usd: float = 1000.0  # Absolute USD cap per position
     max_portfolio_exposure_pct: float = 90.0  # allow up to 90% deployed across open positions
     max_daily_loss_pct: float = 50.0    # INCREASED: Allow 15% daily loss (was 10%) 
     max_positions: int = 30              # INCREASED: Allow 15 concurrent positions (was 10)
@@ -97,6 +98,7 @@ class TradingConfig:
     # === EXECUTION MODES (strategies read these) ===
     live_trading_enabled: bool = True      # MUST be True to actually send orders
     paper_trading_mode: bool = False      # True = simulate only
+    kill_switch_enabled: bool = False     # Emergency stop for all trading
     
     # === PORTFOLIO / STRATEGY SETTINGS (code references settings.trading.*) ===
     total_capital: Optional[float] = None  # None = use live Kalshi balance

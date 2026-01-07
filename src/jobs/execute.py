@@ -9,8 +9,8 @@ from datetime import datetime
 from typing import Optional, Dict
 
 from src.utils.database import DatabaseManager, Position
-from src.config.settings import settings
 from src.utils.logging_setup import get_trading_logger
+from src.utils.safety import enforce_kill_switch
 from src.clients.kalshi_client import KalshiClient, KalshiAPIError
 
 async def execute_position(
@@ -33,6 +33,84 @@ async def execute_position(
     """
     logger = get_trading_logger("trade_execution")
     logger.info(f"Executing position for market: {position.market_id}")
+    live_mode = enforce_kill_switch(live_mode, logger)
+
+    if db_manager.is_safe_mode():
+        logger.warning(
+            "Safe mode active - skipping trade execution",
+            market_id=position.market_id,
+            position_id=position.id
+        )
+        if position.id is not None:
+            await db_manager.update_position_status(position.id, "voided")
+        return False
+
+    async def fetch_fills_with_backoff(
+        ticker: str,
+        client_order_id: str,
+        max_attempts: int = 4,
+        base_delay: float = 0.5
+    ) -> list:
+        for attempt in range(1, max_attempts + 1):
+            fills_response = await kalshi_client.get_fills(ticker=ticker)
+            fills = fills_response.get("fills", [])
+            matching = [
+                fill for fill in fills
+                if fill.get("client_order_id") == client_order_id
+            ]
+            if matching:
+                return matching
+            if attempt < max_attempts:
+                sleep_time = base_delay * (2 ** (attempt - 1))
+                logger.info(
+                    "No fills yet for order %s (attempt %s/%s). Retrying in %.2fs.",
+                    client_order_id,
+                    attempt,
+                    max_attempts,
+                    sleep_time
+                )
+                await asyncio.sleep(sleep_time)
+        return []
+
+    def calculate_average_fill_price(fills: list, side: str) -> tuple[Optional[float], int]:
+        total_price_cents = 0
+        total_count = 0
+
+        for fill in fills:
+            fill_count = fill.get("count")
+            if fill_count is None:
+                fill_count = fill.get("filled") or fill.get("quantity")
+            try:
+                fill_count = int(fill_count) if fill_count is not None else 0
+            except (TypeError, ValueError):
+                fill_count = 0
+
+            if fill_count <= 0:
+                continue
+
+            fill_price = fill.get("price")
+            if fill_price is None:
+                if side.upper() == "YES":
+                    fill_price = fill.get("yes_price")
+                else:
+                    fill_price = fill.get("no_price")
+
+            try:
+                fill_price = int(fill_price) if fill_price is not None else None
+            except (TypeError, ValueError):
+                fill_price = None
+
+            if fill_price is None:
+                continue
+
+            total_count += fill_count
+            total_price_cents += fill_price * fill_count
+
+        if total_count == 0:
+            return None, 0
+
+        average_price = total_price_cents / total_count / 100
+        return average_price, total_count
 
     if live_mode:
         try:
@@ -46,18 +124,30 @@ async def execute_position(
                 type_="market"
             )
             
-            # For a market order, the fill price is not guaranteed.
-            # A more robust implementation would query the /fills endpoint
-            # to confirm the execution price after the fact.
-            # For now, we will optimistically assume it fills at the entry price.
-            fill_price = position.entry_price
+            fills = await fetch_fills_with_backoff(position.market_id, client_order_id)
+            average_fill_price, total_filled = calculate_average_fill_price(fills, position.side)
 
-            await db_manager.update_position_to_live(position.id, fill_price)
-            logger.info(f"Successfully placed LIVE order for {position.market_id}. Order ID: {order_response.get('order', {}).get('order_id')}")
-            return True
+            if average_fill_price is not None and total_filled >= position.quantity:
+                await db_manager.update_position_to_live(position.id, average_fill_price)
+                logger.info(
+                    "Successfully placed LIVE order for %s. Order ID: %s",
+                    position.market_id,
+                    order_response.get("order", {}).get("order_id")
+                )
+                return True
+
+            logger.warning(
+                "Order for %s not fully filled (filled %s/%s). Marking position pending.",
+                position.market_id,
+                total_filled,
+                position.quantity
+            )
+            await db_manager.update_position_status(position.id, "pending")
+            return False
 
         except KalshiAPIError as e:
             logger.error(f"Failed to place LIVE order: {e}")
+            db_manager.record_failure(f"KalshiAPIError: {e}")
             await db_manager.update_position_status(position.id, "voided")  # order failed; don't count as open exposure
             return False
     else:
