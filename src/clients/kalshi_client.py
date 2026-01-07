@@ -20,6 +20,7 @@ from cryptography.hazmat.primitives.asymmetric import padding
 
 from src.config.settings import settings
 from src.utils.logging_setup import TradingLoggerMixin
+from src.utils.health import record_failure
 
 
 class KalshiAPIError(Exception):
@@ -61,8 +62,7 @@ class KalshiClient(TradingLoggerMixin):
         self.max_retries = max_retries
         self.backoff_factor = backoff_factor
         
-        # Load private key
-        self._load_private_key()
+        # Load private key lazily on first authenticated request
         
         # HTTP client with timeouts
         self.client = httpx.AsyncClient(
@@ -90,6 +90,8 @@ class KalshiClient(TradingLoggerMixin):
     def _load_private_key(self) -> None:
         """Load private key from file."""
         try:
+            if self.private_key is not None:
+                return
             private_key_path = Path(self.private_key_path)
             if not private_key_path.exists():
                 raise KalshiAPIError(f"Private key file not found: {self.private_key_path}")
@@ -166,6 +168,8 @@ class KalshiClient(TradingLoggerMixin):
         
         # Add authentication headers if required
         if require_auth:
+            if self.private_key is None:
+                self._load_private_key()
             # Get current timestamp in milliseconds
             timestamp = str(int(time.time() * 1000))
             
@@ -199,25 +203,22 @@ class KalshiClient(TradingLoggerMixin):
                     attempt=attempt + 1
                 )
                 
-                acquired = False
-                try:
-                    await self._acquire_rate_limit()
-                    acquired = True
-                    response = await self.client.request(
-                        method=method,
-                        url=url,
-                        headers=headers,
-                        content=body if body else None
-                    )
-                finally:
-                    if acquired:
-                        KalshiClient._rate_semaphore.release()
+                # Add delay between requests to prevent 429s (Basic tier: 10 writes/sec)
+                await asyncio.sleep(0.1)  # 100ms delay = max 10 requests/second
+                
+                response = await self.client.request(
+                    method=method,
+                    url=url,
+                    headers=headers,
+                    content=body if body else None
+                )
                 
                 response.raise_for_status()
                 return response.json()
                 
             except httpx.HTTPStatusError as e:
                 last_exception = e
+                record_failure("kalshi")
                 # Rate limit (429) or server errors (5xx) are worth retrying
                 if e.response.status_code == 429 or e.response.status_code >= 500:
                     sleep_time = self.backoff_factor * (2 ** attempt)
@@ -234,6 +235,7 @@ class KalshiClient(TradingLoggerMixin):
                     raise KalshiAPIError(error_msg)
             except Exception as e:
                 last_exception = e
+                record_failure("kalshi")
                 self.logger.warning(f"Request failed with general exception. Retrying...", error=str(e), endpoint=endpoint)
                 sleep_time = self.backoff_factor * (2 ** attempt)
                 await asyncio.sleep(sleep_time)
@@ -404,7 +406,7 @@ class KalshiClient(TradingLoggerMixin):
             order_data["expiration_ts"] = expiration_ts
         
         # --- Sanitize + enforce Kalshi API requirements ---
-        # Kalshi expects count as an integer >= 1 (NOT 1.0)
+        # 1. Validate and convert count to integer
         try:
             count_int = int(order_data["count"])
         except Exception:
@@ -414,28 +416,69 @@ class KalshiClient(TradingLoggerMixin):
         order_data["count"] = count_int
 
         order_type = order_data["type"]
-        side_l = order_data["side"]
-        action_l = order_data["action"]
+        side_l = order_data["side"].lower()
+        action_l = order_data["action"].lower()
 
-        # For LIMIT orders, Kalshi requires the side-specific price field
+        # 2. Validate side and action values
+        if side_l not in ["yes", "no"]:
+            raise ValueError(f"Invalid side: {side_l}. Must be 'yes' or 'no'")
+        if action_l not in ["buy", "sell"]:
+            raise ValueError(f"Invalid action: {action_l}. Must be 'buy' or 'sell'")
+        if order_type not in ["market", "limit"]:
+            raise ValueError(f"Invalid order type: {order_type}. Must be 'market' or 'limit'")
+
+        # Ensure side and action are lowercase for Kalshi API
+        order_data["side"] = side_l
+        order_data["action"] = action_l
+
+        # 3. Validate prices if provided (must be 1-99 cents)
+        def validate_price(price: int, price_name: str) -> int:
+            if not isinstance(price, int):
+                raise ValueError(f"{price_name} must be an integer (cents)")
+            if price < 1 or price > 99:
+                raise ValueError(f"{price_name} must be between 1-99 cents (got {price})")
+            return price
+
+        if "yes_price" in order_data and order_data["yes_price"] is not None:
+            order_data["yes_price"] = validate_price(order_data["yes_price"], "yes_price")
+        if "no_price" in order_data and order_data["no_price"] is not None:
+            order_data["no_price"] = validate_price(order_data["no_price"], "no_price")
+
+        # 4. Handle LIMIT orders
         if order_type == "limit":
             if side_l == "yes" and "yes_price" not in order_data:
                 raise ValueError("Limit YES orders require yes_price")
             if side_l == "no" and "no_price" not in order_data:
                 raise ValueError("Limit NO orders require no_price")
 
-        # For MARKET buys, cap max cost (prevents invalid_order / runaway slippage)
-        if order_type == "market" and action_l == "buy":
-            if "buy_max_cost" not in order_data:
-                # worst-case is 99¢ per contract
-                order_data["buy_max_cost"] = count_int * 99
-            order_data.setdefault("time_in_force", "fill_or_kill")
-
-        # If market order, ensure we don't accidentally send limit fields
+        # 5. Handle MARKET orders (both BUY and SELL!)
         if order_type == "market":
-            order_data.pop("yes_price", None)
-            order_data.pop("no_price", None)
-        
+            if action_l == "buy":
+                # For market BUY orders, set the side-specific price to max (99¢)
+                if side_l == "yes" and "yes_price" not in order_data:
+                    order_data["yes_price"] = 99  # Max willing to pay for YES
+                elif side_l == "no" and "no_price" not in order_data:
+                    order_data["no_price"] = 99  # Max willing to pay for NO
+
+                # Set buy_max_cost for additional safety
+                if "buy_max_cost" not in order_data:
+                    order_data["buy_max_cost"] = count_int * 99
+
+            elif action_l == "sell":
+                # ⚠️ CRITICAL FIX: Market SELL orders also need prices!
+                # For market SELL orders, set the side-specific price to min (1¢) to sell fast
+                if side_l == "yes" and "yes_price" not in order_data:
+                    order_data["yes_price"] = 1  # Min willing to accept for YES
+                elif side_l == "no" and "no_price" not in order_data:
+                    order_data["no_price"] = 1  # Min willing to accept for NO
+
+        # 🔧 CRITICAL FIX: ALL orders require time_in_force (official Kalshi API requires full string)
+        if "time_in_force" not in order_data:
+            order_data["time_in_force"] = "good_till_canceled"  # Official Kalshi API value
+
+        # DEBUG: Log the exact order data being sent
+        self.logger.info(f"📤 Sending order to Kalshi API: {order_data}")
+
         return await self._make_authenticated_request(
             "POST", "/trade-api/v2/portfolio/orders", json_data=order_data
         )
