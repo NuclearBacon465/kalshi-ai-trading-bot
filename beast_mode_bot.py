@@ -169,7 +169,7 @@ class BeastModeBot:
                 # Create a queue for market ingestion (though we're not using it in Beast Mode)
                 market_queue = asyncio.Queue()
                 # ✅ FIXED: Pass the shared database manager
-                await run_ingestion(db_manager, market_queue)
+                await run_ingestion(db_manager, market_queue, kalshi_client=kalshi_client)
                 await asyncio.sleep(300)  # Run every 5 minutes (much slower to prevent 429s)
             except Exception as e:
                 self.logger.error(f"Error in market ingestion: {e}")
@@ -191,7 +191,11 @@ class BeastModeBot:
                 self.logger.info(f"🔄 Starting Beast Mode Trading Cycle #{cycle_count}")
                 
                 # Run the Beast Mode unified trading system
-                results = await run_trading_job()
+                results = await run_trading_job(
+                    db_manager=db_manager,
+                    kalshi_client=kalshi_client,
+                    xai_client=xai_client
+                )
                 
                 if results and results.total_positions > 0:
                     self.logger.info(
