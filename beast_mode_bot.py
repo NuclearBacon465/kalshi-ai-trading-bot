@@ -33,6 +33,7 @@ from src.jobs.track import run_tracking
 from src.jobs.evaluate import run_evaluation
 from src.utils.logging_setup import setup_logging, get_trading_logger
 from src.utils.database import DatabaseManager
+from src.utils.risk_cooldown import get_risk_cooldown_status
 from src.clients.kalshi_client import KalshiClient
 from src.clients.xai_client import XAIClient
 from src.config.settings import settings
@@ -181,6 +182,18 @@ class BeastModeBot:
         
         while not self.shutdown_event.is_set():
             try:
+                cooldown_status = get_risk_cooldown_status(db_manager.db_path)
+                if cooldown_status.active:
+                    cooldown_until = cooldown_status.cooldown_until
+                    remaining_minutes = cooldown_status.remaining_seconds / 60
+                    reason = cooldown_status.reason or "risk limits exceeded"
+                    self.logger.warning(
+                        f"🛑 Risk cooldown active until {cooldown_until.isoformat()} "
+                        f"({remaining_minutes:.1f} minutes remaining): {reason}"
+                    )
+                    await self._sleep_with_shutdown(cooldown_status.remaining_seconds)
+                    continue
+
                 # Check daily AI cost limits before starting cycle
                 if not await self._check_daily_ai_limits(xai_client):
                     # Sleep until next day if limits reached
@@ -209,6 +222,14 @@ class BeastModeBot:
             except Exception as e:
                 self.logger.error(f"Error in trading cycle #{cycle_count}: {e}")
                 await asyncio.sleep(60)
+
+    async def _sleep_with_shutdown(self, total_seconds: float, chunk_size: int = 60):
+        """Sleep in chunks while allowing graceful shutdown."""
+        remaining = max(0, total_seconds)
+        while remaining > 0 and not self.shutdown_event.is_set():
+            current_chunk = min(chunk_size, remaining)
+            await asyncio.sleep(current_chunk)
+            remaining -= current_chunk
 
     async def _check_daily_ai_limits(self, xai_client: XAIClient) -> bool:
         """

@@ -74,6 +74,7 @@ class TradingSystemConfig:
     rebalance_frequency_hours: int = 6  # Rebalance every 6 hours
     profit_taking_threshold: float = 0.25  # Take profits at 25%
     loss_cutting_threshold: float = 0.10  # Cut losses at 10%
+    risk_cooldown_minutes: int = 30  # Cooldown duration after risk breach
 
 
 @dataclass
@@ -104,6 +105,8 @@ class TradingSystemResults:
     total_positions: int = 0
     capital_efficiency: float = 0.0  # % of capital used
     expected_annual_return: float = 0.0
+    risk_cooldown_until: Optional[datetime] = None
+    risk_cooldown_reason: Optional[str] = None
 
 
 class UnifiedAdvancedTradingSystem:
@@ -288,7 +291,9 @@ class UnifiedAdvancedTradingSystem:
                 self.logger.warning("No positions created by main strategies - investigating why")
             
             # Step 5: Risk management and rebalancing
-            await self._manage_risk_and_rebalance(results)
+            cooldown_until, cooldown_reason = await self._manage_risk_and_rebalance(results)
+            results.risk_cooldown_until = cooldown_until
+            results.risk_cooldown_reason = cooldown_reason
             
             self.logger.info(
                 f"🎯 Unified Strategy Complete: "
@@ -730,7 +735,9 @@ class UnifiedAdvancedTradingSystem:
             self.logger.error(f"Error compiling results: {e}")
             return TradingSystemResults()
 
-    async def _manage_risk_and_rebalance(self, results: TradingSystemResults):
+    async def _manage_risk_and_rebalance(
+        self, results: TradingSystemResults
+    ) -> Tuple[Optional[datetime], Optional[str]]:
         """
         Manage risk and rebalance portfolio if needed.
         """
@@ -747,9 +754,22 @@ class UnifiedAdvancedTradingSystem:
             if results.correlation_score > self.config.max_correlation_exposure:
                 risk_violations.append(f"Correlation {results.correlation_score:.1%} > limit {self.config.max_correlation_exposure:.1%}")
             
+            cooldown_until = None
+            cooldown_reason = None
             if risk_violations:
+                cooldown_reason = "; ".join(risk_violations)
                 self.logger.warning(f"⚠️  Risk violations detected: {risk_violations}")
-                # TODO: Implement automatic position sizing reduction
+                from src.utils.risk_cooldown import set_risk_cooldown
+
+                cooldown_until = set_risk_cooldown(
+                    self.db_manager.db_path,
+                    timedelta(minutes=self.config.risk_cooldown_minutes),
+                    cooldown_reason,
+                )
+                self.logger.warning(
+                    f"🛑 Risk cooldown active until {cooldown_until.isoformat()}"
+                )
+                return cooldown_until, cooldown_reason
             
             # Check if rebalancing is needed
             time_since_rebalance = datetime.now() - self.last_rebalance
@@ -765,8 +785,11 @@ class UnifiedAdvancedTradingSystem:
             if results.capital_efficiency < 0.8:
                 self.logger.warning(f"⚠️  Low capital efficiency: {results.capital_efficiency:.1%}")
             
+            return cooldown_until, cooldown_reason
+
         except Exception as e:
             self.logger.error(f"Error in risk management: {e}")
+            return None, None
 
 
 
