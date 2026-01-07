@@ -373,6 +373,10 @@ class DatabaseManager(TradingLoggerMixin):
                 warnings INTEGER DEFAULT 0,
                 action_items INTEGER DEFAULT 0,
                 report_file TEXT,
+                rolling_win_rate REAL DEFAULT 0.0,
+                rolling_max_drawdown REAL DEFAULT 0.0,
+                rolling_sharpe REAL DEFAULT 0.0,
+                ready_for_live BOOLEAN DEFAULT 0,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
