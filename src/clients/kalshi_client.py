@@ -20,6 +20,7 @@ from cryptography.hazmat.primitives.asymmetric import padding
 
 from src.config.settings import settings
 from src.utils.logging_setup import TradingLoggerMixin
+from src.utils.health import record_failure
 
 
 class KalshiAPIError(Exception):
@@ -33,6 +34,11 @@ class KalshiClient(TradingLoggerMixin):
     Handles authentication, market data retrieval, and trade execution.
     """
     
+    _rate_semaphore = asyncio.Semaphore(5)
+    _rate_lock = asyncio.Lock()
+    _last_request_ts = 0.0
+    _min_request_interval = 0.35
+
     def __init__(
         self, 
         api_key: Optional[str] = None, 
@@ -65,6 +71,21 @@ class KalshiClient(TradingLoggerMixin):
         )
         
         self.logger.info("Kalshi client initialized", api_key_length=len(self.api_key) if self.api_key else 0)
+
+    async def _acquire_rate_limit(self) -> None:
+        """Acquire shared rate limit slot to reduce 429s."""
+        await KalshiClient._rate_semaphore.acquire()
+        try:
+            async with KalshiClient._rate_lock:
+                now = time.monotonic()
+                elapsed = now - KalshiClient._last_request_ts
+                wait_time = KalshiClient._min_request_interval - elapsed
+                if wait_time > 0:
+                    await asyncio.sleep(wait_time)
+                KalshiClient._last_request_ts = time.monotonic()
+        except Exception:
+            KalshiClient._rate_semaphore.release()
+            raise
     
     def _load_private_key(self) -> None:
         """Load private key from file."""
@@ -197,6 +218,7 @@ class KalshiClient(TradingLoggerMixin):
                 
             except httpx.HTTPStatusError as e:
                 last_exception = e
+                record_failure("kalshi")
                 # Rate limit (429) or server errors (5xx) are worth retrying
                 if e.response.status_code == 429 or e.response.status_code >= 500:
                     sleep_time = self.backoff_factor * (2 ** attempt)
@@ -213,6 +235,7 @@ class KalshiClient(TradingLoggerMixin):
                     raise KalshiAPIError(error_msg)
             except Exception as e:
                 last_exception = e
+                record_failure("kalshi")
                 self.logger.warning(f"Request failed with general exception. Retrying...", error=str(e), endpoint=endpoint)
                 sleep_time = self.backoff_factor * (2 ** attempt)
                 await asyncio.sleep(sleep_time)

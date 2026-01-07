@@ -6,13 +6,15 @@ This job takes a position and executes it as a trade.
 import asyncio
 import uuid
 from datetime import datetime
-from typing import Optional, Dict
+from typing import Optional, Dict, Iterable, Any, List
 
 from src.utils.database import DatabaseManager, Position
 from src.utils.logging_setup import get_trading_logger
 from src.utils.safety import enforce_kill_switch
 from src.clients.kalshi_client import KalshiClient, KalshiAPIError
+from src.utils.health import is_safe_mode_active
 from src.utils.notifications import get_notifier
+
 
 async def execute_position(
     position: Position, 
@@ -38,11 +40,22 @@ async def execute_position(
     logger.info(f"Executing position for market: {position.market_id}")
     live_mode = enforce_kill_switch(live_mode, logger)
 
+    # Check safe mode from database manager
     if db_manager.is_safe_mode():
         logger.warning(
-            "Safe mode active - skipping trade execution",
+            "Safe mode active (db_manager) - skipping trade execution",
             market_id=position.market_id,
             position_id=position.id
+        )
+        if position.id is not None:
+            await db_manager.update_position_status(position.id, "voided")
+        return False
+
+    # Also check global safe mode
+    if is_safe_mode_active():
+        logger.warning(
+            "Safe mode active (global) - blocking trade execution",
+            market_id=position.market_id
         )
         if position.id is not None:
             await db_manager.update_position_status(position.id, "voided")
@@ -114,6 +127,14 @@ async def execute_position(
 
         average_price = total_price_cents / total_count / 100
         return average_price, total_count
+
+    if db_manager.is_safe_mode_active():
+        logger.warning("Safe mode active - skipping trade execution", market_id=position.market_id)
+        return False
+
+    if live_mode and is_kill_switch_enabled():
+        logger.warning("Kill switch enabled: forcing simulated execution mode.")
+        live_mode = False
 
     if live_mode:
         try:
@@ -216,6 +237,92 @@ async def execute_position(
         return True
 
 
+def _normalize_fill_price(price: Any) -> Optional[float]:
+    if price is None:
+        return None
+    try:
+        normalized = float(price)
+    except (TypeError, ValueError):
+        return None
+    if normalized > 1.0:
+        normalized /= 100
+    return normalized
+
+
+def _extract_fill_price(fill: Dict[str, Any], side: str) -> Optional[float]:
+    side_key = side.lower()
+    if "price" in fill:
+        return _normalize_fill_price(fill.get("price"))
+    if side_key == "yes" and "yes_price" in fill:
+        return _normalize_fill_price(fill.get("yes_price"))
+    if side_key == "no" and "no_price" in fill:
+        return _normalize_fill_price(fill.get("no_price"))
+    if "yes_price" in fill:
+        return _normalize_fill_price(fill.get("yes_price"))
+    if "no_price" in fill:
+        return _normalize_fill_price(fill.get("no_price"))
+    return None
+
+
+def _extract_fill_count(fill: Dict[str, Any]) -> Optional[int]:
+    for key in ("count", "quantity", "size", "filled_count"):
+        if key in fill and fill[key] is not None:
+            try:
+                return int(fill[key])
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def _calculate_average_fill_price(
+    fills: Iterable[Dict[str, Any]],
+    side: str,
+) -> Optional[float]:
+    total_notional = 0.0
+    total_count = 0
+
+    for fill in fills:
+        fill_price = _extract_fill_price(fill, side)
+        if fill_price is None:
+            continue
+        fill_count = _extract_fill_count(fill) or 1
+        total_notional += fill_price * fill_count
+        total_count += fill_count
+
+    if total_count == 0:
+        return None
+    return total_notional / total_count
+
+
+async def _fetch_average_fill_price(
+    kalshi_client: KalshiClient,
+    ticker: str,
+    client_order_id: str,
+    side: str,
+    max_attempts: int = 3,
+    base_delay: float = 0.5,
+) -> Optional[float]:
+    for attempt in range(max_attempts):
+        fills_response = await kalshi_client.get_fills(ticker=ticker)
+        raw_fills = fills_response.get("fills") or fills_response.get("data") or []
+        fills: List[Dict[str, Any]] = raw_fills if isinstance(raw_fills, list) else []
+
+        matching_fills = [
+            fill for fill in fills
+            if fill.get("client_order_id") == client_order_id
+            or fill.get("clientOrderId") == client_order_id
+        ]
+
+        average_price = _calculate_average_fill_price(matching_fills, side)
+        if average_price is not None:
+            return average_price
+
+        if attempt < max_attempts - 1:
+            await asyncio.sleep(base_delay * (2 ** attempt))
+
+    return None
+
+
 async def place_sell_limit_order(
     position: Position,
     limit_price: float,
@@ -235,6 +342,10 @@ async def place_sell_limit_order(
         True if order placed successfully, False otherwise
     """
     logger = get_trading_logger("sell_limit_order")
+
+    if db_manager.is_safe_mode_active():
+        logger.warning("Safe mode active - skipping sell limit order", market_id=position.market_id)
+        return False
     
     try:
         import uuid
@@ -283,6 +394,10 @@ async def place_sell_limit_order(
             logger.error(f"❌ Failed to place sell limit order: {response}")
             return False
             
+    except KalshiAPIError as e:
+        logger.error(f"❌ Kalshi error placing sell limit order for {position.market_id}: {e}")
+        db_manager.record_failure("kalshi_api_error")
+        return False
     except Exception as e:
         logger.error(f"❌ Error placing sell limit order for {position.market_id}: {e}")
         return False

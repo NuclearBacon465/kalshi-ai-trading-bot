@@ -75,6 +75,11 @@ class TradingSystemConfig:
     rebalance_frequency_hours: int = 6  # Rebalance every 6 hours
     profit_taking_threshold: float = 0.25  # Take profits at 25%
     loss_cutting_threshold: float = 0.10  # Cut losses at 10%
+    
+    # Data freshness (from codex branch)
+    market_data_max_age_seconds: int = 30  # Skip trading on stale market data
+    
+    # Risk cooldown (from main branch)
     risk_cooldown_minutes: int = 30  # Pause new trades after risk violations
 
 
@@ -106,6 +111,8 @@ class TradingSystemResults:
     total_positions: int = 0
     capital_efficiency: float = 0.0  # % of capital used
     expected_annual_return: float = 0.0
+    risk_cooldown_until: Optional[datetime] = None
+    risk_cooldown_reason: Optional[str] = None
 
 
 class UnifiedAdvancedTradingSystem:
@@ -263,11 +270,13 @@ class UnifiedAdvancedTradingSystem:
                     self.logger.info(f"✅ CLOSED {enforcement_result['positions_closed']} positions to meet limits")
             
             # Step 1: Get ALL available markets (no time restrictions) - MORE PERMISSIVE VOLUME
+            # Using last_updated filtering from codex branch
             markets = await self.db_manager.get_eligible_markets(
                 volume_min=200,  # DECREASED: Much lower volume requirement (was 50,000, now 200) for more opportunities
-                max_days_to_expiry=365  # Accept any timeline with dynamic exits
+                max_days_to_expiry=365,  # Accept any timeline with dynamic exits
+                last_updated_max_age_seconds=self.config.market_data_max_age_seconds,
             )
-            markets = self._filter_stale_markets(markets)
+            
             if not markets:
                 self.logger.warning("No markets available for trading")
                 return TradingSystemResults()
@@ -314,23 +323,6 @@ class UnifiedAdvancedTradingSystem:
         except Exception as e:
             self.logger.error(f"Error in unified trading strategy: {e}")
             return TradingSystemResults()
-
-    def _filter_stale_markets(self, markets: List[Market], max_age_seconds: int = 30) -> List[Market]:
-        """Filter out stale markets and log rejections."""
-        now = datetime.now()
-        fresh_markets: List[Market] = []
-        for market in markets:
-            age_seconds = (now - market.last_updated).total_seconds()
-            if age_seconds > max_age_seconds:
-                self.logger.warning(
-                    "Skipping stale market data in unified trading system",
-                    market_id=market.market_id,
-                    age_seconds=round(age_seconds, 2),
-                    last_updated=market.last_updated.isoformat(),
-                )
-                continue
-            fresh_markets.append(market)
-        return fresh_markets
 
     async def _execute_market_making_strategy(self, markets: List[Market]) -> Dict:
         """
@@ -476,6 +468,13 @@ class UnifiedAdvancedTradingSystem:
         
         try:
             from src.jobs.execute import execute_position
+            from src.config.settings import settings
+            from src.utils.position_limits import get_max_position_size
+
+            max_position_size_usd = getattr(settings.trading, "max_position_size_usd", None)
+            max_position_size_pct_value = await get_max_position_size(
+                self.db_manager, self.kalshi_client
+            )
             
             for market_id, allocation_fraction in allocation.allocations.items():
                 try:
@@ -807,7 +806,10 @@ class UnifiedAdvancedTradingSystem:
             if results.correlation_score > self.config.max_correlation_exposure:
                 risk_violations.append(f"Correlation {results.correlation_score:.1%} > limit {self.config.max_correlation_exposure:.1%}")
             
+            cooldown_until = None
+            cooldown_reason = None
             if risk_violations:
+                cooldown_reason = "; ".join(risk_violations)
                 self.logger.warning(f"⚠️  Risk violations detected: {risk_violations}")
                 cooldown_until = datetime.now() + timedelta(minutes=self.config.risk_cooldown_minutes)
                 from src.utils.risk_cooldown import save_risk_cooldown_state
@@ -832,105 +834,11 @@ class UnifiedAdvancedTradingSystem:
             if results.capital_efficiency < 0.8:
                 self.logger.warning(f"⚠️  Low capital efficiency: {results.capital_efficiency:.1%}")
             
+            return cooldown_until, cooldown_reason
+
         except Exception as e:
             self.logger.error(f"Error in risk management: {e}")
         return None
-
-    async def _execute_rebalancing(self):
-        """
-        Execute automatic portfolio rebalancing.
-
-        Rebalancing Actions:
-        1. Take profits on positions above profit threshold
-        2. Cut losses on positions below loss threshold
-        3. Rebalance strategy allocations if drift is significant
-        4. Close redundant correlated positions
-        """
-        try:
-            self.logger.info("🔄 Starting portfolio rebalancing...")
-
-            # Get all open positions
-            positions = await self.db_manager.get_open_positions()
-
-            if not positions:
-                self.logger.info("No positions to rebalance")
-                return
-
-            rebalance_actions = {
-                'profit_takes': 0,
-                'loss_cuts': 0,
-                'redundant_closes': 0,
-                'total_positions': len(positions)
-            }
-
-            # Get current market prices for all positions
-            for position in positions:
-                try:
-                    market_info = await self.kalshi_client.get_market(position.market_id)
-
-                    if position.side.lower() == "yes":
-                        current_price = market_info.get('yes_price', 50) / 100
-                    else:
-                        current_price = market_info.get('no_price', 50) / 100
-
-                    # Calculate P&L
-                    unrealized_pnl = (current_price - position.entry_price) * position.quantity
-                    pnl_pct = (current_price - position.entry_price) / position.entry_price if position.entry_price > 0 else 0
-
-                    # Action 1: Take profits if above threshold
-                    if pnl_pct >= self.config.profit_taking_threshold:
-                        self.logger.info(
-                            f"💰 PROFIT TAKE: {position.market_id} - "
-                            f"PnL: ${unrealized_pnl:.2f} ({pnl_pct:.1%})"
-                        )
-
-                        # Close position with smart limit order
-                        from src.jobs.execute import execute_close_position
-                        success = await execute_close_position(
-                            position=position,
-                            db_manager=self.db_manager,
-                            kalshi_client=self.kalshi_client,
-                            reason="profit_target_reached"
-                        )
-
-                        if success:
-                            rebalance_actions['profit_takes'] += 1
-
-                    # Action 2: Cut losses if below threshold
-                    elif pnl_pct <= -self.config.loss_cutting_threshold:
-                        self.logger.warning(
-                            f"✂️  LOSS CUT: {position.market_id} - "
-                            f"PnL: ${unrealized_pnl:.2f} ({pnl_pct:.1%})"
-                        )
-
-                        # Close position immediately
-                        from src.jobs.execute import execute_close_position
-                        success = await execute_close_position(
-                            position=position,
-                            db_manager=self.db_manager,
-                            kalshi_client=self.kalshi_client,
-                            reason="stop_loss_triggered"
-                        )
-
-                        if success:
-                            rebalance_actions['loss_cuts'] += 1
-
-                    await asyncio.sleep(0.1)  # Rate limit protection
-
-                except Exception as e:
-                    self.logger.error(f"Error rebalancing position {position.market_id}: {e}")
-                    continue
-
-            # Log rebalancing summary
-            self.logger.info(
-                f"✅ Rebalancing complete: "
-                f"Profit takes: {rebalance_actions['profit_takes']}, "
-                f"Loss cuts: {rebalance_actions['loss_cuts']}, "
-                f"Total positions: {rebalance_actions['total_positions']}"
-            )
-
-        except Exception as e:
-            self.logger.error(f"Error in portfolio rebalancing: {e}")
 
     def get_system_performance_summary(self) -> Dict:
         """
@@ -977,6 +885,10 @@ async def run_unified_trading_system(
     logger = get_trading_logger("unified_trading_main")
     
     try:
+        if is_kill_switch_enabled():
+            logger.warning("Kill switch enabled: unified trading system is paused.")
+            return TradingSystemResults()
+
         logger.info("🚀 Starting Unified Advanced Trading System")
 
         if db_manager.is_safe_mode():
@@ -1017,4 +929,4 @@ async def run_unified_trading_system(
         
     except Exception as e:
         logger.error(f"Error in unified trading system: {e}")
-        return TradingSystemResults() 
+        return TradingSystemResults()

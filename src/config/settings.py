@@ -90,6 +90,11 @@ class TradingConfig:
     enable_daily_cost_limiting: bool = True  # Enable daily cost limits
     sleep_when_limit_reached: bool = True  # Sleep until next day when limit reached
 
+    # Task restart policy for background supervisors
+    restart_failed_tasks: bool = True
+    max_task_restarts: int = 3
+    task_restart_delay_seconds: int = 5
+
     # Enhanced market filtering to reduce analyses - MORE PERMISSIVE
     min_volume_for_ai_analysis: float = 25.0  # DECREASED: Much lower threshold (was 50, now 25 for more opportunities)
     exclude_low_liquidity_categories: List[str] = field(default_factory=lambda: [
@@ -107,6 +112,7 @@ class TradingConfig:
 
     min_position_size: float = 2.0         # allow tiny test trades
     max_position_size: float = 1000.0      # high cap; % caps usually bind first
+    max_position_size_usd: float = 1000.0  # absolute USD cap per position
 
     max_concurrent_markets: int = 50
     ev_threshold: float = 0.01             # lower = more trades
@@ -115,6 +121,10 @@ class TradingConfig:
     news_search_volume_threshold: float = 200.0
 
     target_sharpe: float = 0.10
+
+    # Order hygiene
+    stale_order_max_age_minutes: int = 30
+    stale_order_price_drift_cents: int = 5
 
 
 @dataclass

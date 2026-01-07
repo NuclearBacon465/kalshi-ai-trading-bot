@@ -15,6 +15,10 @@ from src.config.settings import settings
 from src.utils.logging_setup import get_trading_logger
 
 
+HIGH_FREQUENCY_INGESTION_WINDOW_SECONDS = 900
+_last_full_ingestion_ts = 0.0
+
+
 async def process_and_queue_markets(
     markets_data: List[dict],
     db_manager: DatabaseManager,
@@ -114,6 +118,7 @@ async def run_ingestion(
     else:
         should_close_client = False
 
+    global _last_full_ingestion_ts
     try:
         # Get all market IDs with existing positions
         existing_position_market_ids = await db_manager.get_markets_with_positions()
@@ -132,28 +137,70 @@ async def run_ingestion(
             else:
                 logger.warning(f"Could not find market with ticker: {market_ticker}")
         else:
-            logger.info("Fetching all active markets from Kalshi API with pagination.")
-            cursor = None
-            while True:
-                response = await kalshi_client.get_markets(limit=100, cursor=cursor)
-                markets_page = response.get("markets", [])
+            now = time.time()
+            use_incremental = (
+                _last_full_ingestion_ts > 0
+                and now - _last_full_ingestion_ts < HIGH_FREQUENCY_INGESTION_WINDOW_SECONDS
+            )
 
-                active_markets = [m for m in markets_page if m["status"] == "active"]
-                if active_markets:
+            if use_incremental:
+                recent_market_ids = await db_manager.get_recent_market_ids(limit=300)
+                tickers = list(set(recent_market_ids) | existing_position_market_ids)
+                if tickers:
                     logger.info(
-                        f"Fetched {len(markets_page)} markets, {len(active_markets)} are active."
+                        "Using incremental market refresh to avoid full pagination.",
+                        tickers=len(tickers),
+                        window_seconds=HIGH_FREQUENCY_INGESTION_WINDOW_SECONDS
                     )
-                    await process_and_queue_markets(
-                        active_markets,
-                        db_manager,
-                        queue,
-                        existing_position_market_ids,
-                        logger,
-                    )
+                    chunk_size = 50
+                    for i in range(0, len(tickers), chunk_size):
+                        chunk = tickers[i:i + chunk_size]
+                        response = await kalshi_client.get_markets(
+                            limit=len(chunk),
+                            tickers=chunk
+                        )
+                        markets_page = response.get("markets", [])
+                        active_markets = [m for m in markets_page if m["status"] == "active"]
+                        if active_markets:
+                            logger.info(
+                                f"Fetched {len(markets_page)} markets, {len(active_markets)} are active."
+                            )
+                            await process_and_queue_markets(
+                                active_markets,
+                                db_manager,
+                                queue,
+                                existing_position_market_ids,
+                                logger,
+                            )
+                else:
+                    logger.info("No recent markets found for incremental refresh; falling back to full ingestion.")
+                    use_incremental = False
 
-                cursor = response.get("cursor")
-                if not cursor:
-                    break
+            if not use_incremental:
+                logger.info("Fetching all active markets from Kalshi API with pagination.")
+                cursor = None
+                while True:
+                    response = await kalshi_client.get_markets(limit=100, cursor=cursor)
+                    markets_page = response.get("markets", [])
+
+                    active_markets = [m for m in markets_page if m["status"] == "active"]
+                    if active_markets:
+                        logger.info(
+                            f"Fetched {len(markets_page)} markets, {len(active_markets)} are active."
+                        )
+                        await process_and_queue_markets(
+                            active_markets,
+                            db_manager,
+                            queue,
+                            existing_position_market_ids,
+                            logger,
+                        )
+
+                    cursor = response.get("cursor")
+                    if not cursor:
+                        break
+
+                _last_full_ingestion_ts = now
 
     except Exception as e:
         logger.error(

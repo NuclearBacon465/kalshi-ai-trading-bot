@@ -140,10 +140,19 @@ async def _fallback_legacy_trading() -> Optional[TradingSystemResults]:
     logger = get_trading_logger("trading_job_fallback")
     
     try:
+        if is_kill_switch_enabled():
+            logger.warning("Kill switch enabled: skipping fallback trading execution.")
+            return TradingSystemResults()
+
         logger.info("🔄 Executing fallback legacy trading system")
         
         # Initialize components
         db_manager = DatabaseManager()
+
+        if db_manager.is_safe_mode_active():
+            logger.warning("Safe mode active - skipping legacy trading execution")
+            return TradingSystemResults()
+
         kalshi_client = KalshiClient()
         xai_client = XAIClient()
         

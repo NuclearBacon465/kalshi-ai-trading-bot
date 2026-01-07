@@ -53,6 +53,8 @@ show_usage() {
     echo "  config          - Show current configuration"
     echo "  limits          - Check position limits status" 
     echo "  cash            - Check cash reserves status"
+    echo "  safe-status     - Check safe mode status"
+    echo "  safe-reset      - Reset safe mode (manual override)"
     echo "  logs            - View recent logs"
     echo "  clean           - Clean test files"
     echo "  stop            - Emergency stop trading"
@@ -177,6 +179,29 @@ asyncio.run(main())
 "
 }
 
+check_safe_mode() {
+    print_header "Safe Mode Status"
+    python -c "
+from src.utils.database import DatabaseManager
+db = DatabaseManager()
+state = db._load_safe_mode_state()
+status = 'ACTIVE' if state.get('safe_mode') else 'INACTIVE'
+print(f'🛡️ Safe mode: {status}')
+print(f'❌ Failure count: {state.get(\"failure_count\", 0)}')
+print(f'🕒 Last failure: {state.get(\"last_failure\", \"None\")}')
+"
+}
+
+reset_safe_mode() {
+    print_header "Reset Safe Mode"
+    python -c "
+from src.utils.database import DatabaseManager
+db = DatabaseManager()
+db.reset_safe_mode()
+print('✅ Safe mode reset. Trading can resume.')
+"
+}
+
 # Dashboard and analysis
 launch_dashboard() {
     print_header "Launching Trading Dashboard"
@@ -273,6 +298,12 @@ case "${1:-help}" in
         ;;
     "cash")
         check_cash_reserves
+        ;;
+    "safe-status")
+        check_safe_mode
+        ;;
+    "safe-reset")
+        reset_safe_mode
         ;;
     "dashboard")
         launch_dashboard
