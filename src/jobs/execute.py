@@ -128,6 +128,10 @@ async def execute_position(
         average_price = total_price_cents / total_count / 100
         return average_price, total_count
 
+    if db_manager.is_safe_mode_active():
+        logger.warning("Safe mode active - skipping trade execution", market_id=position.market_id)
+        return False
+
     if live_mode:
         try:
             client_order_id = str(uuid.uuid4())
@@ -248,6 +252,10 @@ async def place_sell_limit_order(
         True if order placed successfully, False otherwise
     """
     logger = get_trading_logger("sell_limit_order")
+
+    if db_manager.is_safe_mode_active():
+        logger.warning("Safe mode active - skipping sell limit order", market_id=position.market_id)
+        return False
     
     try:
         import uuid
@@ -296,6 +304,10 @@ async def place_sell_limit_order(
             logger.error(f"❌ Failed to place sell limit order: {response}")
             return False
             
+    except KalshiAPIError as e:
+        logger.error(f"❌ Kalshi error placing sell limit order for {position.market_id}: {e}")
+        db_manager.record_failure("kalshi_api_error")
+        return False
     except Exception as e:
         logger.error(f"❌ Error placing sell limit order for {position.market_id}: {e}")
         return False

@@ -144,6 +144,11 @@ async def _fallback_legacy_trading() -> Optional[TradingSystemResults]:
         
         # Initialize components
         db_manager = DatabaseManager()
+
+        if db_manager.is_safe_mode_active():
+            logger.warning("Safe mode active - skipping legacy trading execution")
+            return TradingSystemResults()
+
         kalshi_client = KalshiClient()
         xai_client = XAIClient()
         
