@@ -484,6 +484,27 @@ class DatabaseManager(TradingLoggerMixin):
                 markets.append(market)
             return markets
 
+    async def get_active_markets(self) -> List[Market]:
+        """
+        Get all active markets from the database.
+
+        Returns:
+            List of active markets
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("""
+                SELECT * FROM markets WHERE status = 'active'
+            """)
+            rows = await cursor.fetchall()
+
+            markets = []
+            for row in rows:
+                market_dict = dict(row)
+                market_dict['last_updated'] = datetime.fromisoformat(market_dict['last_updated'])
+                markets.append(Market(**market_dict))
+            return markets
+
     async def get_markets_with_positions(self) -> set[str]:
         """
         Returns a set of market IDs that have associated open positions.

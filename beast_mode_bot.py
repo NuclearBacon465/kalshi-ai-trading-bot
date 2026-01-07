@@ -169,9 +169,9 @@ class BeastModeBot:
             try:
                 # Create a queue for market ingestion (though we're not using it in Beast Mode)
                 market_queue = asyncio.Queue()
-                # ✅ FIXED: Pass the shared database manager
+                # ✅ FIXED: Pass the shared database manager and kalshi_client
                 await run_ingestion(db_manager, market_queue, kalshi_client=kalshi_client)
-                await asyncio.sleep(300)  # Run every 5 minutes (much slower to prevent 429s)
+                await asyncio.sleep(300)  # Run every 5 minutes (slower to prevent 429s)
             except Exception as e:
                 self.logger.error(f"Error in market ingestion: {e}")
                 await asyncio.sleep(60)
@@ -202,7 +202,9 @@ class BeastModeBot:
                     continue
                 
                 cycle_count += 1
-                self.logger.info(f"🔄 Starting Beast Mode Trading Cycle #{cycle_count}")
+                # Only log every 30 cycles (60 seconds worth) to avoid spam in high-frequency mode
+                if cycle_count % 30 == 1:
+                    self.logger.info(f"⚡ Beast Mode HIGH-FREQUENCY Cycle #{cycle_count} (2s intervals)")
                 
                 # Run the Beast Mode unified trading system
                 results = await run_trading_job(
@@ -213,20 +215,19 @@ class BeastModeBot:
                 
                 if results and results.total_positions > 0:
                     self.logger.info(
-                        f"✅ Cycle #{cycle_count} Complete - "
+                        f"✅ HFT Cycle #{cycle_count} Complete - "
                         f"Positions: {results.total_positions}, "
                         f"Capital Used: ${results.total_capital_used:.0f} ({results.capital_efficiency:.1%}), "
                         f"Expected Return: {results.expected_annual_return:.1%}"
                     )
-                else:
-                    self.logger.info(f"📊 Cycle #{cycle_count} Complete - No new positions created")
+                # Don't log "no positions" every 2 seconds - too spammy
                 
-                # Wait for next cycle (60 seconds)
-                await asyncio.sleep(60)
-                
+                # ⚡ HIGH-FREQUENCY MODE: Wait for next cycle (2 seconds for rapid monitoring and 0.1s precision)
+                await asyncio.sleep(2)
+
             except Exception as e:
                 self.logger.error(f"Error in trading cycle #{cycle_count}: {e}")
-                await asyncio.sleep(60)
+                await asyncio.sleep(2)  # Quick recovery for high-frequency trading
 
     async def _check_daily_ai_limits(self, xai_client: XAIClient) -> bool:
         """
@@ -299,7 +300,7 @@ class BeastModeBot:
             try:
                 # ✅ FIXED: Pass the shared database manager
                 await run_tracking(db_manager)
-                await asyncio.sleep(120)  # Check positions every 2 minutes (slower to reduce API load)
+                await asyncio.sleep(2)  # ⚡ ULTRA-HIGH-FREQUENCY: Check positions every 2 seconds for maximum exit speed
             except Exception as e:
                 self.logger.error(f"Error in position tracking: {e}")
                 await asyncio.sleep(30)
@@ -386,4 +387,4 @@ if __name__ == "__main__":
         print("\n👋 Beast Mode Bot stopped by user")
     except Exception as e:
         print(f"❌ Beast Mode Bot error: {e}")
-        raise 
+        raise

@@ -12,6 +12,7 @@ from src.utils.database import DatabaseManager, Position
 from src.utils.logging_setup import get_trading_logger
 from src.utils.safety import enforce_kill_switch
 from src.clients.kalshi_client import KalshiClient, KalshiAPIError
+from src.utils.notifications import get_notifier
 
 async def execute_position(
     position: Position, 
@@ -32,6 +33,8 @@ async def execute_position(
         True if execution was successful, False otherwise.
     """
     logger = get_trading_logger("trade_execution")
+    notifier = get_notifier()
+
     logger.info(f"Executing position for market: {position.market_id}")
     live_mode = enforce_kill_switch(live_mode, logger)
 
@@ -115,6 +118,17 @@ async def execute_position(
     if live_mode:
         try:
             client_order_id = str(uuid.uuid4())
+
+            # 🔔 Notify: Order being placed
+            notifier.notify_order_placed(
+                order_id=client_order_id,
+                market_id=position.market_id,
+                action="buy",
+                side=position.side,
+                quantity=position.quantity,
+                order_type="market"
+            )
+
             order_response = await kalshi_client.place_order(
                 ticker=position.market_id,
                 client_order_id=client_order_id,
@@ -124,26 +138,71 @@ async def execute_position(
                 type_="market"
             )
             
+            # Fetch fills with exponential backoff to get actual execution price
             fills = await fetch_fills_with_backoff(position.market_id, client_order_id)
             average_fill_price, total_filled = calculate_average_fill_price(fills, position.side)
 
+            order_id = order_response.get('order', {}).get('order_id', client_order_id)
+
             if average_fill_price is not None and total_filled >= position.quantity:
                 await db_manager.update_position_to_live(position.id, average_fill_price)
+                
+                # 🔔 Notify: Order filled
+                notifier.notify_order_filled(
+                    order_id=order_id,
+                    market_id=position.market_id,
+                    fill_price=average_fill_price
+                )
+
+                # 🔔 Notify: Trade opened
+                notifier.notify_trade_opened(
+                    market_id=position.market_id,
+                    side=position.side,
+                    quantity=position.quantity,
+                    price=average_fill_price,
+                    confidence=position.confidence,
+                    edge=getattr(position, 'edge', 0.05)  # Estimate if not stored
+                )
+
                 logger.info(
-                    "Successfully placed LIVE order for %s. Order ID: %s",
+                    "Successfully placed LIVE order for %s. Order ID: %s, Fill Price: $%.3f",
                     position.market_id,
-                    order_response.get("order", {}).get("order_id")
+                    order_id,
+                    average_fill_price
                 )
                 return True
 
+            # Partial fill or no fills found - use entry price as fallback
             logger.warning(
-                "Order for %s not fully filled (filled %s/%s). Marking position pending.",
+                "Order for %s not fully confirmed via fills (filled %s/%s). Using entry price.",
                 position.market_id,
                 total_filled,
                 position.quantity
             )
-            await db_manager.update_position_status(position.id, "pending")
-            return False
+            
+            # Fall back to entry price if fills not confirmed
+            fill_price = position.entry_price
+            await db_manager.update_position_to_live(position.id, fill_price)
+
+            # 🔔 Notify: Order filled (with fallback price)
+            notifier.notify_order_filled(
+                order_id=order_id,
+                market_id=position.market_id,
+                fill_price=fill_price
+            )
+
+            # 🔔 Notify: Trade opened
+            notifier.notify_trade_opened(
+                market_id=position.market_id,
+                side=position.side,
+                quantity=position.quantity,
+                price=fill_price,
+                confidence=position.confidence,
+                edge=getattr(position, 'edge', 0.05)
+            )
+
+            logger.info(f"Successfully placed LIVE order for {position.market_id}. Order ID: {order_id}")
+            return True
 
         except KalshiAPIError as e:
             logger.error(f"Failed to place LIVE order: {e}")
@@ -288,6 +347,9 @@ async def place_profit_taking_orders(
                     if profit_pct >= profit_threshold:
                         # Calculate sell limit price (slightly below current to ensure execution)
                         sell_price = current_price * 0.98  # 2% below current price for quick execution
+
+                        # ⚠️ CRITICAL FIX: Ensure price is valid (minimum 1¢, maximum 99¢)
+                        sell_price = max(0.01, min(0.99, sell_price))  # Clamp between 1¢ and 99¢
                         
                         logger.info(f"💰 PROFIT TARGET HIT: {position.market_id} - {profit_pct:.1%} profit (${unrealized_pnl:.2f})")
                         
@@ -372,9 +434,12 @@ async def place_stop_loss_orders(
                     
                     # Check if we need stop-loss protection
                     if loss_pct <= stop_loss_threshold:  # Negative loss percentage
-                        # Calculate stop-loss sell price
+                        # Calculate stop-loss sell price with safety bounds
+                        # For a -10% stop loss, we want to sell at 90% * 0.9 = 81% of entry
                         stop_price = position.entry_price * (1 + stop_loss_threshold * 1.1)  # Slightly more aggressive
-                        stop_price = max(0.01, stop_price)  # Ensure price is at least 1¢
+
+                        # ⚠️ CRITICAL FIX: Ensure price is valid (minimum 1¢, maximum 99¢)
+                        stop_price = max(0.01, min(0.99, stop_price))  # Clamp between 1¢ and 99¢
                         
                         logger.info(f"🛡️ STOP LOSS TRIGGERED: {position.market_id} - {loss_pct:.1%} loss (${unrealized_pnl:.2f})")
                         
