@@ -824,7 +824,7 @@ class UnifiedAdvancedTradingSystem:
             time_since_rebalance = datetime.now() - self.last_rebalance
             if time_since_rebalance.total_seconds() > (self.config.rebalance_frequency_hours * 3600):
                 self.logger.info("🔄 Portfolio rebalancing triggered")
-                # TODO: Implement rebalancing logic
+                await self._execute_rebalancing()
                 self.last_rebalance = datetime.now()
             
             # Performance monitoring

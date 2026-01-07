@@ -516,6 +516,171 @@ class KalshiClient(TradingLoggerMixin):
             "GET", "/trade-api/v2/portfolio/trades", params=params
         )
     
+    async def place_smart_limit_order(
+        self,
+        ticker: str,
+        client_order_id: str,
+        side: str,
+        action: str,
+        count: int,
+        target_price: Optional[float] = None,
+        max_slippage_pct: float = 0.02
+    ) -> Dict[str, Any]:
+        """
+        Place a smart limit order with optimal pricing.
+
+        Automatically calculates limit price based on current market price
+        with configurable slippage tolerance for better fills.
+
+        Args:
+            ticker: Market ticker
+            client_order_id: Unique order ID
+            side: "yes" or "no"
+            action: "buy" or "sell"
+            count: Number of contracts
+            target_price: Target price in dollars (0.01-0.99), if None uses current market
+            max_slippage_pct: Maximum slippage tolerance (default 2%)
+
+        Returns:
+            Order response
+
+        Benefits:
+            - Better fills (save 1-3 cents per contract)
+            - Reduce slippage costs
+            - Capture spread when market making
+        """
+        try:
+            # Get current market price if no target provided
+            if target_price is None:
+                market_info = await self.get_market(ticker)
+                if side.lower() == "yes":
+                    current_price = market_info.get('yes_price', 50) / 100
+                else:
+                    current_price = market_info.get('no_price', 50) / 100
+                target_price = current_price
+
+            # Calculate limit price with slippage tolerance
+            if action.lower() == "buy":
+                # For buying: willing to pay slightly more to ensure fill
+                limit_price = target_price * (1 + max_slippage_pct)
+            else:
+                # For selling: willing to accept slightly less
+                limit_price = target_price * (1 - max_slippage_pct)
+
+            # Clamp to valid range
+            limit_price = max(0.01, min(0.99, limit_price))
+            limit_price_cents = int(limit_price * 100)
+
+            # Place limit order
+            order_data = {
+                "ticker": ticker,
+                "client_order_id": client_order_id,
+                "side": side,
+                "action": action,
+                "count": count,
+                "type": "limit"
+            }
+
+            if side.lower() == "yes":
+                order_data["yes_price"] = limit_price_cents
+            else:
+                order_data["no_price"] = limit_price_cents
+
+            # Add time_in_force
+            order_data["time_in_force"] = "good_till_canceled"
+
+            self.logger.info(
+                f"📊 Smart limit order: {action.upper()} {count} {side.upper()} "
+                f"at {limit_price_cents}¢ (target: {int(target_price*100)}¢, "
+                f"slippage: {max_slippage_pct:.1%})"
+            )
+
+            return await self._make_authenticated_request(
+                "POST", "/trade-api/v2/portfolio/orders", json_data=order_data
+            )
+
+        except Exception as e:
+            self.logger.error(f"Smart limit order failed, falling back to market order: {e}")
+            # Fallback to market order if limit order fails
+            return await self.place_order(
+                ticker=ticker,
+                client_order_id=client_order_id,
+                side=side,
+                action=action,
+                count=count,
+                type_="market"
+            )
+
+    async def place_iceberg_order(
+        self,
+        ticker: str,
+        side: str,
+        action: str,
+        total_count: int,
+        chunk_size: int = 5,
+        delay_seconds: float = 2.0
+    ) -> list:
+        """
+        Place large order in smaller chunks to reduce market impact.
+
+        Useful for large positions to avoid moving the market against you.
+
+        Args:
+            ticker: Market ticker
+            side: "yes" or "no"
+            action: "buy" or "sell"
+            total_count: Total contracts to trade
+            chunk_size: Contracts per chunk (default 5)
+            delay_seconds: Delay between chunks (default 2s)
+
+        Returns:
+            List of order responses
+
+        Benefits:
+            - Reduce market impact on large orders
+            - Better average fill price
+            - Avoid alerting other traders to large position
+        """
+        import uuid
+
+        orders = []
+        remaining = total_count
+
+        self.logger.info(
+            f"🔪 Iceberg order: {total_count} contracts in chunks of {chunk_size}"
+        )
+
+        while remaining > 0:
+            chunk = min(chunk_size, remaining)
+
+            try:
+                order_id = str(uuid.uuid4())
+                response = await self.place_smart_limit_order(
+                    ticker=ticker,
+                    client_order_id=order_id,
+                    side=side,
+                    action=action,
+                    count=chunk
+                )
+
+                orders.append(response)
+                remaining -= chunk
+
+                self.logger.info(
+                    f"✅ Iceberg chunk placed: {chunk} contracts "
+                    f"({total_count - remaining}/{total_count} complete)"
+                )
+
+                if remaining > 0:
+                    await asyncio.sleep(delay_seconds)
+
+            except Exception as e:
+                self.logger.error(f"Iceberg chunk failed: {e}")
+                # Continue with remaining chunks even if one fails
+                break
+
+        return orders
+
     async def close(self) -> None:
         """Close the HTTP client."""
         await self.client.aclose()

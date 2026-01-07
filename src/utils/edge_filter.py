@@ -82,31 +82,44 @@ class EdgeFilter:
         else:
             side = "NO"   # AI thinks NO is underpriced (YES is overpriced)
         
-        # Confidence-adjusted edge thresholds
+        # Confidence-adjusted edge thresholds (IMPROVED LOGIC)
+        # Use tiered approach but also consider confidence-adjusted edge
         if confidence >= 0.8:
-            required_edge = cls.HIGH_CONFIDENCE_EDGE     # 4% for high confidence (80%+)
+            required_edge = cls.HIGH_CONFIDENCE_EDGE     # 2% for high confidence (80%+)
         elif confidence >= 0.6:
-            required_edge = cls.MEDIUM_CONFIDENCE_EDGE   # 5% for medium confidence (60-80%)
+            required_edge = cls.MEDIUM_CONFIDENCE_EDGE   # 3% for medium confidence (60-80%)
         else:
-            required_edge = cls.LOW_CONFIDENCE_EDGE      # 8% for low confidence (50-60%)
-        
-        # Calculate confidence-adjusted edge
+            required_edge = cls.LOW_CONFIDENCE_EDGE      # 4% for low confidence (50-60%)
+
+        # Calculate confidence-adjusted edge (represents expected value)
         confidence_adjusted_edge = edge_percentage * confidence
-        
-        # Check if edge meets requirements (use > instead of >= to avoid floating point precision issues)
+
+        # IMPROVED: Pass if EITHER condition is met:
+        # 1. Raw edge meets threshold for confidence level, OR
+        # 2. Confidence-adjusted edge >= 1% (good expected value)
         passes_basic_edge = edge_percentage > (required_edge - 0.001)  # Allow tiny tolerance for floating point
+        passes_adjusted_edge = confidence_adjusted_edge >= 0.01  # At least 1% expected value
         passes_confidence = confidence >= cls.MIN_CONFIDENCE_FOR_TRADE
+
+        # Accept trade if confidence is sufficient AND (raw edge OR adjusted edge is good)
+        passes_edge_check = passes_basic_edge or passes_adjusted_edge
         
-        # Generate filtering decision and reason
+        # Generate filtering decision and reason (IMPROVED)
         if not passes_confidence:
             passes_filter = False
             reason = f"Confidence {confidence:.1%} below minimum {cls.MIN_CONFIDENCE_FOR_TRADE:.1%}"
-        elif not passes_basic_edge:
+        elif not passes_edge_check:
             passes_filter = False
-            reason = f"Edge {edge_percentage:.1%} below required {required_edge:.1%} for confidence {confidence:.1%}"
+            if passes_basic_edge:
+                reason = f"Edge {edge_percentage:.1%} meets raw threshold but adjusted edge {confidence_adjusted_edge:.1%} below 1%"
+            else:
+                reason = f"Edge {edge_percentage:.1%} below required {required_edge:.1%} for confidence {confidence:.1%} (adjusted: {confidence_adjusted_edge:.1%})"
         else:
             passes_filter = True
-            reason = f"Meets requirements: {edge_percentage:.1%} edge, {confidence:.1%} confidence"
+            if passes_adjusted_edge and not passes_basic_edge:
+                reason = f"Good expected value: {confidence_adjusted_edge:.1%} (edge: {edge_percentage:.1%} × confidence: {confidence:.1%})"
+            else:
+                reason = f"Meets requirements: {edge_percentage:.1%} edge, {confidence:.1%} confidence"
         
         return EdgeFilterResult(
             passes_filter=passes_filter,

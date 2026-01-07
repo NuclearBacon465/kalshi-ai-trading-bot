@@ -578,7 +578,95 @@ async def place_stop_loss_orders(
         
         logger.info(f"🛡️ Stop-loss summary: {results['orders_placed']} orders placed from {results['positions_processed']} positions")
         return results
-        
+
     except Exception as e:
         logger.error(f"Error in stop-loss order placement: {e}")
         return results
+
+
+async def execute_close_position(
+    position: Position,
+    db_manager: DatabaseManager,
+    kalshi_client: KalshiClient,
+    reason: str = "manual_close"
+) -> bool:
+    """
+    Close an existing position (used for rebalancing, profit-taking, stop-loss).
+
+    Args:
+        position: Position to close
+        db_manager: Database manager
+        kalshi_client: Kalshi client
+        reason: Reason for closing (for logging)
+
+    Returns:
+        True if successfully closed, False otherwise
+    """
+    logger = get_trading_logger("position_closer")
+
+    try:
+        import uuid
+
+        # Get current market price
+        market_info = await kalshi_client.get_market(position.market_id)
+
+        if position.side.lower() == "yes":
+            current_price = market_info.get('yes_price', 50) / 100
+        else:
+            current_price = market_info.get('no_price', 50) / 100
+
+        # Try smart limit order first (better fill price)
+        if hasattr(kalshi_client, 'place_smart_limit_order'):
+            try:
+                order_id = str(uuid.uuid4())
+                response = await kalshi_client.place_smart_limit_order(
+                    ticker=position.market_id,
+                    client_order_id=order_id,
+                    side=position.side,
+                    action="sell",
+                    count=position.quantity,
+                    target_price=current_price,
+                    max_slippage_pct=0.03  # Allow 3% slippage for closing
+                )
+
+                if response and 'order' in response:
+                    logger.info(
+                        f"✅ Position closed via smart limit: {position.market_id} "
+                        f"(reason: {reason})"
+                    )
+
+                    # Update position status in database
+                    await db_manager.update_position_status(position.id, "closed")
+
+                    return True
+
+            except Exception as e:
+                logger.warning(f"Smart limit close failed, trying market order: {e}")
+
+        # Fallback to regular limit order
+        limit_price = current_price * 0.98  # 2% below current for quick fill
+        limit_price = max(0.01, min(0.99, limit_price))
+
+        success = await place_sell_limit_order(
+            position=position,
+            limit_price=limit_price,
+            db_manager=db_manager,
+            kalshi_client=kalshi_client
+        )
+
+        if success:
+            logger.info(
+                f"✅ Position closed via limit order: {position.market_id} "
+                f"(reason: {reason})"
+            )
+
+            # Update position status
+            await db_manager.update_position_status(position.id, "closed")
+
+            return True
+
+        return False
+
+    except Exception as e:
+        logger.error(f"Failed to close position {position.market_id}: {e}")
+        return False
