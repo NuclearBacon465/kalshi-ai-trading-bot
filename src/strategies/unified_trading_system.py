@@ -74,6 +74,7 @@ class TradingSystemConfig:
     rebalance_frequency_hours: int = 6  # Rebalance every 6 hours
     profit_taking_threshold: float = 0.25  # Take profits at 25%
     loss_cutting_threshold: float = 0.10  # Cut losses at 10%
+    risk_cooldown_minutes: int = 30  # Pause new trades after risk violations
 
 
 @dataclass
@@ -288,7 +289,12 @@ class UnifiedAdvancedTradingSystem:
                 self.logger.warning("No positions created by main strategies - investigating why")
             
             # Step 5: Risk management and rebalancing
-            await self._manage_risk_and_rebalance(results)
+            cooldown_until = await self._manage_risk_and_rebalance(results)
+            if cooldown_until:
+                self.logger.warning(
+                    f"⏸️ Risk cooldown active until {cooldown_until.isoformat()} - "
+                    "new trades will be skipped next cycle"
+                )
             
             self.logger.info(
                 f"🎯 Unified Strategy Complete: "
@@ -730,7 +736,7 @@ class UnifiedAdvancedTradingSystem:
             self.logger.error(f"Error compiling results: {e}")
             return TradingSystemResults()
 
-    async def _manage_risk_and_rebalance(self, results: TradingSystemResults):
+    async def _manage_risk_and_rebalance(self, results: TradingSystemResults) -> Optional[datetime]:
         """
         Manage risk and rebalance portfolio if needed.
         """
@@ -749,7 +755,14 @@ class UnifiedAdvancedTradingSystem:
             
             if risk_violations:
                 self.logger.warning(f"⚠️  Risk violations detected: {risk_violations}")
-                # TODO: Implement automatic position sizing reduction
+                cooldown_until = datetime.now() + timedelta(minutes=self.config.risk_cooldown_minutes)
+                from src.utils.risk_cooldown import save_risk_cooldown_state
+                save_risk_cooldown_state(self.db_manager.db_path, cooldown_until, risk_violations)
+                self.logger.warning(
+                    f"🛑 Risk cooldown activated until {cooldown_until.isoformat()} "
+                    f"to prevent new trades next cycle"
+                )
+                return cooldown_until
             
             # Check if rebalancing is needed
             time_since_rebalance = datetime.now() - self.last_rebalance
@@ -767,6 +780,7 @@ class UnifiedAdvancedTradingSystem:
             
         except Exception as e:
             self.logger.error(f"Error in risk management: {e}")
+        return None
 
 
 
