@@ -12,6 +12,7 @@ from src.utils.database import DatabaseManager, Position
 from src.config.settings import settings
 from src.utils.logging_setup import get_trading_logger
 from src.clients.kalshi_client import KalshiClient, KalshiAPIError
+from src.utils.notifications import get_notifier
 
 async def execute_position(
     position: Position, 
@@ -32,11 +33,24 @@ async def execute_position(
         True if execution was successful, False otherwise.
     """
     logger = get_trading_logger("trade_execution")
+    notifier = get_notifier()
+
     logger.info(f"Executing position for market: {position.market_id}")
 
     if live_mode:
         try:
             client_order_id = str(uuid.uuid4())
+
+            # 🔔 Notify: Order being placed
+            notifier.notify_order_placed(
+                order_id=client_order_id,
+                market_id=position.market_id,
+                action="buy",
+                side=position.side,
+                quantity=position.quantity,
+                order_type="market"
+            )
+
             order_response = await kalshi_client.place_order(
                 ticker=position.market_id,
                 client_order_id=client_order_id,
@@ -45,7 +59,7 @@ async def execute_position(
                 count=position.quantity,
                 type_="market"
             )
-            
+
             # For a market order, the fill price is not guaranteed.
             # A more robust implementation would query the /fills endpoint
             # to confirm the execution price after the fact.
@@ -53,7 +67,27 @@ async def execute_position(
             fill_price = position.entry_price
 
             await db_manager.update_position_to_live(position.id, fill_price)
-            logger.info(f"Successfully placed LIVE order for {position.market_id}. Order ID: {order_response.get('order', {}).get('order_id')}")
+
+            order_id = order_response.get('order', {}).get('order_id', client_order_id)
+
+            # 🔔 Notify: Order filled
+            notifier.notify_order_filled(
+                order_id=order_id,
+                market_id=position.market_id,
+                fill_price=fill_price
+            )
+
+            # 🔔 Notify: Trade opened
+            notifier.notify_trade_opened(
+                market_id=position.market_id,
+                side=position.side,
+                quantity=position.quantity,
+                price=fill_price,
+                confidence=position.confidence,
+                edge=getattr(position, 'edge', 0.05)  # Estimate if not stored
+            )
+
+            logger.info(f"Successfully placed LIVE order for {position.market_id}. Order ID: {order_id}")
             return True
 
         except KalshiAPIError as e:

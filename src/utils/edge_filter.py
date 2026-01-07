@@ -34,15 +34,15 @@ class EdgeFilter:
     UPDATED: More aggressive thresholds to allow more trading opportunities.
     """
     
-    # ⚡ OPTIMIZED: More permissive edge requirements for significantly more trading opportunities
-    MIN_EDGE_REQUIREMENT = 0.05        # ⚡ OPTIMIZED: 5% minimum edge (was 8%)
-    HIGH_CONFIDENCE_EDGE = 0.04        # ⚡ OPTIMIZED: 4% edge for high confidence (80%+) - was 6%
-    MEDIUM_CONFIDENCE_EDGE = 0.05      # ⚡ OPTIMIZED: 5% edge for medium confidence (60-80%) - was 8%
-    LOW_CONFIDENCE_EDGE = 0.08         # ⚡ OPTIMIZED: 8% edge for low confidence (50-60%) - was 12%
-    
-    # DECREASED: More permissive filters for more opportunities
-    MIN_CONFIDENCE_FOR_TRADE = 0.50    # DECREASED: 50% minimum confidence (was 65%)
-    MAX_ACCEPTABLE_RISK = 0.6          # INCREASED: 60% max position risk (was 50%)
+    # 🚀 ULTRA-AGGRESSIVE: Maximum trading frequency with 2-4% edges
+    MIN_EDGE_REQUIREMENT = 0.03        # 🚀 ULTRA-AGGRESSIVE: 3% minimum edge (was 5%)
+    HIGH_CONFIDENCE_EDGE = 0.02        # 🚀 ULTRA-AGGRESSIVE: 2% edge for high confidence (80%+) - was 4%
+    MEDIUM_CONFIDENCE_EDGE = 0.03      # 🚀 ULTRA-AGGRESSIVE: 3% edge for medium confidence (60-80%) - was 5%
+    LOW_CONFIDENCE_EDGE = 0.04         # 🚀 ULTRA-AGGRESSIVE: 4% edge for low confidence (50-60%) - was 8%
+
+    # 🚀 ULTRA-AGGRESSIVE: Maximum opportunities
+    MIN_CONFIDENCE_FOR_TRADE = 0.45    # 🚀 ULTRA-AGGRESSIVE: 45% minimum confidence (was 50%)
+    MAX_ACCEPTABLE_RISK = 0.7          # 🚀 ULTRA-AGGRESSIVE: 70% max position risk (was 60%)
     
     # UPDATED: More permissive quality filters
     MIN_VOLUME_FOR_HIGH_EDGE = 500     # DECREASED: Lower volume requirement (was 2000, now 500)
