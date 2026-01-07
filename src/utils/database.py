@@ -46,6 +46,25 @@ class Position:
     target_confidence_change: Optional[float] = None  # Exit if confidence drops by this amount
 
 @dataclass
+class Order:
+    """Represents an order synced from Kalshi."""
+    order_id: str
+    ticker: str
+    status: str
+    side: Optional[str] = None
+    action: Optional[str] = None
+    type: Optional[str] = None
+    yes_price: Optional[int] = None
+    no_price: Optional[int] = None
+    count: Optional[int] = None
+    remaining_count: Optional[int] = None
+    created_ts: Optional[int] = None
+    updated_ts: Optional[int] = None
+    client_order_id: Optional[str] = None
+    expiration_ts: Optional[int] = None
+    last_synced: Optional[datetime] = None
+
+@dataclass
 class TradeLog:
     """Represents a closed trade for logging and analysis."""
     market_id: str
@@ -269,6 +288,26 @@ class DatabaseManager(TradingLoggerMixin):
         """)
 
         await db.execute("""
+            CREATE TABLE IF NOT EXISTS orders (
+                order_id TEXT PRIMARY KEY,
+                ticker TEXT NOT NULL,
+                status TEXT NOT NULL,
+                side TEXT,
+                action TEXT,
+                type TEXT,
+                yes_price INTEGER,
+                no_price INTEGER,
+                count INTEGER,
+                remaining_count INTEGER,
+                created_ts INTEGER,
+                updated_ts INTEGER,
+                client_order_id TEXT,
+                expiration_ts INTEGER,
+                last_synced TEXT NOT NULL
+            )
+        """)
+
+        await db.execute("""
             CREATE TABLE IF NOT EXISTS market_analyses (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 market_id TEXT NOT NULL,
@@ -392,6 +431,66 @@ class DatabaseManager(TradingLoggerMixin):
             """, market_dicts)
             await db.commit()
             self.logger.info(f"Upserted {len(markets)} markets.")
+
+    async def upsert_orders(self, orders: List[Order]):
+        """
+        Upsert a list of orders into the database.
+
+        Args:
+            orders: A list of Order dataclass objects.
+        """
+        if not orders:
+            return
+
+        async with aiosqlite.connect(self.db_path) as db:
+            order_dicts = []
+            for order in orders:
+                order_dict = asdict(order)
+                order_dict['last_synced'] = (
+                    order.last_synced.isoformat()
+                    if order.last_synced
+                    else datetime.utcnow().isoformat()
+                )
+                order_dicts.append(order_dict)
+
+            await db.executemany("""
+                INSERT INTO orders (
+                    order_id, ticker, status, side, action, type, yes_price, no_price, count,
+                    remaining_count, created_ts, updated_ts, client_order_id, expiration_ts, last_synced
+                )
+                VALUES (
+                    :order_id, :ticker, :status, :side, :action, :type, :yes_price, :no_price, :count,
+                    :remaining_count, :created_ts, :updated_ts, :client_order_id, :expiration_ts, :last_synced
+                )
+                ON CONFLICT(order_id) DO UPDATE SET
+                    ticker=excluded.ticker,
+                    status=excluded.status,
+                    side=excluded.side,
+                    action=excluded.action,
+                    type=excluded.type,
+                    yes_price=excluded.yes_price,
+                    no_price=excluded.no_price,
+                    count=excluded.count,
+                    remaining_count=excluded.remaining_count,
+                    created_ts=excluded.created_ts,
+                    updated_ts=excluded.updated_ts,
+                    client_order_id=excluded.client_order_id,
+                    expiration_ts=excluded.expiration_ts,
+                    last_synced=excluded.last_synced
+            """, order_dicts)
+            await db.commit()
+            self.logger.info(f"Upserted {len(orders)} orders.")
+
+    async def update_order_status(self, order_id: str, status: str, updated_ts: Optional[int] = None):
+        """Update the status (and optionally updated_ts) for a specific order."""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("""
+                UPDATE orders
+                SET status = ?, updated_ts = COALESCE(?, updated_ts), last_synced = ?
+                WHERE order_id = ?
+            """, (status, updated_ts, datetime.utcnow().isoformat(), order_id))
+            await db.commit()
+            self.logger.info(f"Updated order {order_id} status to {status}.")
 
     async def get_eligible_markets(self, volume_min: int, max_days_to_expiry: int) -> List[Market]:
         """

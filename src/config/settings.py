@@ -113,6 +113,10 @@ class TradingConfig:
 
     target_sharpe: float = 0.10
 
+    # Order hygiene
+    stale_order_max_age_minutes: int = 30
+    stale_order_price_drift_cents: int = 5
+
 
 @dataclass
 class LoggingConfig:
