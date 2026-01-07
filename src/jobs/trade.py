@@ -25,6 +25,7 @@ from src.clients.xai_client import XAIClient
 from src.utils.database import DatabaseManager
 from src.config.settings import settings
 from src.utils.logging_setup import get_trading_logger
+from src.utils.safety import should_halt_trading
 
 # Import the new unified system
 from src.strategies.unified_trading_system import (
@@ -38,7 +39,11 @@ from src.jobs.decide import make_decision_for_market
 from src.jobs.execute import execute_position
 
 
-async def run_trading_job() -> Optional[TradingSystemResults]:
+async def run_trading_job(
+    db_manager: Optional[DatabaseManager] = None,
+    kalshi_client: Optional[KalshiClient] = None,
+    xai_client: Optional[XAIClient] = None
+) -> Optional[TradingSystemResults]:
     """
     Enhanced trading job using the Unified Advanced Trading System.
     
@@ -55,12 +60,15 @@ async def run_trading_job() -> Optional[TradingSystemResults]:
     logger = get_trading_logger("trading_job")
     
     try:
+        if should_halt_trading(logger):
+            return TradingSystemResults()
+
         logger.info("🚀 Starting Enhanced Trading Job - Beast Mode Activated!")
         
         # Initialize clients
-        db_manager = DatabaseManager()
-        kalshi_client = KalshiClient()
-        xai_client = XAIClient(db_manager=db_manager)  # Pass db_manager for LLM logging
+        db_manager = db_manager or DatabaseManager()
+        kalshi_client = kalshi_client or KalshiClient()
+        xai_client = xai_client or XAIClient(db_manager=db_manager)  # Pass db_manager for LLM logging
         
         # Configure the unified system
         # Use default settings unless overridden
@@ -83,7 +91,8 @@ async def run_trading_job() -> Optional[TradingSystemResults]:
             # Rebalancing
             rebalance_frequency_hours=getattr(settings.trading, 'rebalance_hours', 6),
             profit_taking_threshold=getattr(settings.trading, 'profit_threshold', 0.25),
-            loss_cutting_threshold=getattr(settings.trading, 'loss_threshold', 0.10)
+            loss_cutting_threshold=getattr(settings.trading, 'loss_threshold', 0.10),
+            risk_cooldown_minutes=getattr(settings.trading, 'risk_cooldown_minutes', 30)
         )
         
         # Execute the unified trading system
@@ -165,7 +174,12 @@ async def _fallback_legacy_trading() -> Optional[TradingSystemResults]:
                 
                 if position:
                     # Execute position
-                    success = await execute_position(position, kalshi_client, db_manager)
+                    success = await execute_position(
+                        position=position,
+                        live_mode=getattr(settings.trading, 'live_trading_enabled', False),
+                        db_manager=db_manager,
+                        kalshi_client=kalshi_client
+                    )
                     if success:
                         positions_created += 1
                         total_exposure += position.entry_price * position.quantity
