@@ -74,6 +74,9 @@ class TradingSystemConfig:
     rebalance_frequency_hours: int = 6  # Rebalance every 6 hours
     profit_taking_threshold: float = 0.25  # Take profits at 25%
     loss_cutting_threshold: float = 0.10  # Cut losses at 10%
+    
+    # Data freshness
+    market_data_max_age_seconds: int = 30  # Skip trading on stale market data
 
 
 @dataclass
@@ -259,11 +262,42 @@ class UnifiedAdvancedTradingSystem:
             
             # Step 1: Get ALL available markets (no time restrictions) - MORE PERMISSIVE VOLUME
             markets = await self.db_manager.get_eligible_markets(
-            volume_min=200,  # DECREASED: Much lower volume requirement (was 50,000, now 200) for more opportunities
-            max_days_to_expiry=365  # Accept any timeline with dynamic exits
-        )
+                volume_min=200,  # DECREASED: Much lower volume requirement (was 50,000, now 200) for more opportunities
+                max_days_to_expiry=365,  # Accept any timeline with dynamic exits
+                last_updated_max_age_seconds=self.config.market_data_max_age_seconds,
+            )
             if not markets:
                 self.logger.warning("No markets available for trading")
+                return TradingSystemResults()
+
+            now = datetime.now()
+            stale_markets = []
+            fresh_markets = []
+            for market in markets:
+                age_seconds = (now - market.last_updated).total_seconds()
+                if age_seconds > self.config.market_data_max_age_seconds:
+                    stale_markets.append(
+                        {
+                            "market_id": market.market_id,
+                            "age_seconds": round(age_seconds, 2),
+                            "last_updated": market.last_updated.isoformat(),
+                        }
+                    )
+                else:
+                    fresh_markets.append(market)
+
+            if stale_markets:
+                self.logger.info(
+                    "Skipping markets with stale data",
+                    stale_count=len(stale_markets),
+                    max_age_seconds=self.config.market_data_max_age_seconds,
+                    stale_markets=stale_markets[:20],
+                    stale_markets_truncated=len(stale_markets) > 20,
+                )
+
+            markets = fresh_markets
+            if not markets:
+                self.logger.warning("No markets available after filtering stale data")
                 return TradingSystemResults()
             
             self.logger.info(f"Analyzing {len(markets)} markets across all strategies")

@@ -393,19 +393,27 @@ class DatabaseManager(TradingLoggerMixin):
             await db.commit()
             self.logger.info(f"Upserted {len(markets)} markets.")
 
-    async def get_eligible_markets(self, volume_min: int, max_days_to_expiry: int) -> List[Market]:
+    async def get_eligible_markets(
+        self,
+        volume_min: int,
+        max_days_to_expiry: int,
+        last_updated_max_age_seconds: int = 30,
+    ) -> List[Market]:
         """
         Get markets that are eligible for trading.
 
         Args:
             volume_min: Minimum trading volume.
             max_days_to_expiry: Maximum days to expiration.
+            last_updated_max_age_seconds: Maximum age of market data in seconds.
         
         Returns:
             A list of eligible markets.
         """
         now_ts = int(datetime.now().timestamp())
         max_expiry_ts = now_ts + (max_days_to_expiry * 24 * 60 * 60)
+        last_updated_cutoff = datetime.now() - timedelta(seconds=last_updated_max_age_seconds)
+        last_updated_cutoff_iso = last_updated_cutoff.isoformat()
 
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
@@ -416,8 +424,9 @@ class DatabaseManager(TradingLoggerMixin):
                     expiration_ts > ? AND
                     expiration_ts <= ? AND
                     status = 'active' AND
-                    has_position = 0
-            """, (volume_min, now_ts, max_expiry_ts))
+                    has_position = 0 AND
+                    last_updated >= ?
+            """, (volume_min, now_ts, max_expiry_ts, last_updated_cutoff_iso))
             rows = await cursor.fetchall()
             
             markets = []
