@@ -88,6 +88,10 @@ class TradingConfig:
     enable_daily_cost_limiting: bool = True  # Enable daily cost limits
     sleep_when_limit_reached: bool = True  # Sleep until next day when limit reached
 
+    # Safe mode controls
+    safe_mode_failure_threshold: int = 3  # Failures before forcing safe mode
+    safe_mode_state_file: str = "logs/safe_mode_state.json"  # Persistent safe mode state
+
     # Enhanced market filtering to reduce analyses - MORE PERMISSIVE
     min_volume_for_ai_analysis: float = 50.0  # DECREASED: Much lower threshold (was 500, now 200)
     exclude_low_liquidity_categories: List[str] = field(default_factory=lambda: [

@@ -3,10 +3,13 @@ Database manager for the Kalshi trading system.
 """
 
 import aiosqlite
+import json
+import os
 from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Any
 
+from src.config.settings import settings
 from src.utils.logging_setup import TradingLoggerMixin
 
 
@@ -82,7 +85,79 @@ class DatabaseManager(TradingLoggerMixin):
     def __init__(self, db_path: str = "trading_system.db"):
         """Initialize database connection."""
         self.db_path = db_path
+        self.safe_mode_state_file = settings.trading.safe_mode_state_file
         self.logger.info("Initializing database manager", db_path=db_path)
+
+    def _load_safe_mode_state(self) -> Dict[str, Any]:
+        """Load safe mode state from disk."""
+        default_state = {"failure_count": 0, "safe_mode": False, "last_failure": None}
+        state_path = self.safe_mode_state_file
+
+        if not state_path:
+            return default_state
+
+        try:
+            if os.path.exists(state_path):
+                with open(state_path, "r", encoding="utf-8") as state_file:
+                    data = json.load(state_file)
+                if isinstance(data, dict):
+                    return {**default_state, **data}
+        except Exception as e:
+            self.logger.warning("Failed to load safe mode state", error=str(e))
+
+        return default_state
+
+    def _save_safe_mode_state(self, state: Dict[str, Any]) -> None:
+        """Persist safe mode state to disk."""
+        state_path = self.safe_mode_state_file
+        if not state_path:
+            return
+
+        try:
+            os.makedirs(os.path.dirname(state_path) or ".", exist_ok=True)
+            with open(state_path, "w", encoding="utf-8") as state_file:
+                json.dump(state, state_file, indent=2)
+        except Exception as e:
+            self.logger.error("Failed to save safe mode state", error=str(e))
+
+    def record_failure(self, reason: str) -> None:
+        """Record a failure and enable safe mode if threshold is exceeded."""
+        state = self._load_safe_mode_state()
+        state["failure_count"] = int(state.get("failure_count", 0)) + 1
+        state["last_failure"] = datetime.now().isoformat()
+
+        threshold = settings.trading.safe_mode_failure_threshold
+        if state["failure_count"] >= threshold:
+            state["safe_mode"] = True
+            self.logger.warning(
+                "Safe mode activated due to repeated failures",
+                failure_count=state["failure_count"],
+                threshold=threshold,
+                reason=reason
+            )
+        else:
+            self.logger.warning(
+                "Recorded trading failure",
+                failure_count=state["failure_count"],
+                threshold=threshold,
+                reason=reason
+            )
+
+        self._save_safe_mode_state(state)
+
+    def reset_safe_mode(self) -> None:
+        """Reset safe mode and failure counters (manual intervention)."""
+        state = self._load_safe_mode_state()
+        state["failure_count"] = 0
+        state["safe_mode"] = False
+        state["last_failure"] = None
+        self._save_safe_mode_state(state)
+        self.logger.info("Safe mode reset manually")
+
+    def is_safe_mode_active(self) -> bool:
+        """Check if safe mode is active."""
+        state = self._load_safe_mode_state()
+        return bool(state.get("safe_mode"))
 
     async def initialize(self) -> None:
         """Initialize database schema and run migrations."""

@@ -34,6 +34,10 @@ async def execute_position(
     logger = get_trading_logger("trade_execution")
     logger.info(f"Executing position for market: {position.market_id}")
 
+    if db_manager.is_safe_mode_active():
+        logger.warning("Safe mode active - skipping trade execution", market_id=position.market_id)
+        return False
+
     if live_mode:
         try:
             client_order_id = str(uuid.uuid4())
@@ -58,6 +62,7 @@ async def execute_position(
 
         except KalshiAPIError as e:
             logger.error(f"Failed to place LIVE order: {e}")
+            db_manager.record_failure("kalshi_api_error")
             await db_manager.update_position_status(position.id, "voided")  # order failed; don't count as open exposure
             return False
     else:
@@ -86,6 +91,10 @@ async def place_sell_limit_order(
         True if order placed successfully, False otherwise
     """
     logger = get_trading_logger("sell_limit_order")
+
+    if db_manager.is_safe_mode_active():
+        logger.warning("Safe mode active - skipping sell limit order", market_id=position.market_id)
+        return False
     
     try:
         import uuid
@@ -134,6 +143,10 @@ async def place_sell_limit_order(
             logger.error(f"❌ Failed to place sell limit order: {response}")
             return False
             
+    except KalshiAPIError as e:
+        logger.error(f"❌ Kalshi error placing sell limit order for {position.market_id}: {e}")
+        db_manager.record_failure("kalshi_api_error")
+        return False
     except Exception as e:
         logger.error(f"❌ Error placing sell limit order for {position.market_id}: {e}")
         return False

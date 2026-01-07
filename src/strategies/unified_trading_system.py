@@ -816,6 +816,10 @@ async def run_unified_trading_system(
     
     try:
         logger.info("🚀 Starting Unified Advanced Trading System")
+
+        if db_manager.is_safe_mode_active():
+            logger.warning("Safe mode active - skipping trading execution")
+            return TradingSystemResults()
         
         # Initialize system
         trading_system = UnifiedAdvancedTradingSystem(

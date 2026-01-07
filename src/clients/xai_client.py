@@ -190,6 +190,12 @@ class XAIClient(TradingLoggerMixin):
             daily_cost=self.daily_tracker.total_cost,
             requests_today=self.daily_tracker.request_count
         )
+
+        if self.db_manager:
+            try:
+                self.db_manager.record_failure("xai_resource_exhausted")
+            except Exception as e:
+                self.logger.warning("Failed to record safe mode failure", error=str(e))
         
         # Mark API as exhausted
         self.is_api_exhausted = True
