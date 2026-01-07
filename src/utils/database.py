@@ -623,6 +623,22 @@ class DatabaseManager(TradingLoggerMixin):
             rows = await cursor.fetchall()
             return {row[0] for row in rows}
 
+    async def get_recent_market_ids(self, limit: int = 200) -> List[str]:
+        """
+        Get recently updated market IDs for incremental refreshes.
+
+        Args:
+            limit: Maximum number of market IDs to return.
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute("""
+                SELECT market_id FROM markets
+                ORDER BY last_updated DESC
+                LIMIT ?
+            """, (limit,))
+            rows = await cursor.fetchall()
+            return [row[0] for row in rows]
+
     async def is_position_opening_for_market(self, market_id: str) -> bool:
         """
         Checks if a position is currently being opened for a given market.

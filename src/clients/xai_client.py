@@ -50,6 +50,11 @@ class XAIClient(TradingLoggerMixin):
     xAI client for AI-powered trading decisions.
     Uses Grok models for market analysis and trading strategy.
     """
+
+    _request_semaphore = asyncio.Semaphore(1)
+    _request_lock = asyncio.Lock()
+    _last_request_ts = 0.0
+    _min_request_interval = 0.75
     
     def __init__(self, api_key: Optional[str] = None, db_manager=None):
         """
@@ -378,9 +383,10 @@ class XAIClient(TradingLoggerMixin):
                 # Check for valid response
                 if not response_content or not response_content.strip():
                     self.logger.warning(
-                        "Search returned empty result",
+                        "Search sampling failed", 
                         query=optimized_query[:50],
-                        processing_time=processing_time
+                        error=str(sample_error),
+                        error_type=type(sample_error).__name__
                     )
                     return self._get_fallback_context(query, max_length)
                 
