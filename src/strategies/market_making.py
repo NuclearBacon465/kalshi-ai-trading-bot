@@ -288,7 +288,12 @@ class AdvancedMarketMaker:
         """
         try:
             # Available capital for market making
-            available_capital = getattr(settings.trading, 'max_position_size', 1000)
+            max_position_size = getattr(settings.trading, "max_position_size", 1000)
+            max_position_size_usd = getattr(settings.trading, "max_position_size_usd", None)
+            if max_position_size_usd is not None:
+                available_capital = min(max_position_size, max_position_size_usd)
+            else:
+                available_capital = max_position_size
             
             # Kelly fraction calculation
             # f* = (bp - q) / b where b=odds, p=win_prob, q=lose_prob

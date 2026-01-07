@@ -448,6 +448,13 @@ class UnifiedAdvancedTradingSystem:
         
         try:
             from src.jobs.execute import execute_position
+            from src.config.settings import settings
+            from src.utils.position_limits import get_max_position_size
+
+            max_position_size_usd = getattr(settings.trading, "max_position_size_usd", None)
+            max_position_size_pct_value = await get_max_position_size(
+                self.db_manager, self.kalshi_client
+            )
             
             for market_id, allocation_fraction in allocation.allocations.items():
                 try:
@@ -479,6 +486,30 @@ class UnifiedAdvancedTradingSystem:
                     
                     # Calculate initial position size
                     initial_position_value = allocation_fraction * self.directional_capital
+
+                    # Apply absolute USD cap and skip if both % and USD caps are exceeded
+                    if max_position_size_usd is not None:
+                        if (
+                            max_position_size_pct_value is not None
+                            and initial_position_value > max_position_size_pct_value
+                            and initial_position_value > max_position_size_usd
+                        ):
+                            self.logger.info(
+                                "❌ POSITION LIMITS HIT: "
+                                f"{market_id} allocation ${initial_position_value:.2f} "
+                                f"exceeds {settings.trading.max_position_size_pct}% cap "
+                                f"(${max_position_size_pct_value:.2f}) and USD cap "
+                                f"(${max_position_size_usd:.2f}); skipping trade."
+                            )
+                            results['failed_executions'] += 1
+                            continue
+                        if initial_position_value > max_position_size_usd:
+                            self.logger.info(
+                                f"⚠️ USD CAP APPLIED: "
+                                f"{market_id} allocation ${initial_position_value:.2f} "
+                                f"capped to ${max_position_size_usd:.2f}"
+                            )
+                            initial_position_value = max_position_size_usd
                     
                     # Check position limits and adjust if needed
                     from src.utils.position_limits import check_can_add_position
