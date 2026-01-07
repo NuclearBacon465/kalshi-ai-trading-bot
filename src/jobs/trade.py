@@ -87,7 +87,8 @@ async def run_trading_job(
             # Rebalancing
             rebalance_frequency_hours=getattr(settings.trading, 'rebalance_hours', 6),
             profit_taking_threshold=getattr(settings.trading, 'profit_threshold', 0.25),
-            loss_cutting_threshold=getattr(settings.trading, 'loss_threshold', 0.10)
+            loss_cutting_threshold=getattr(settings.trading, 'loss_threshold', 0.10),
+            risk_cooldown_minutes=getattr(settings.trading, 'risk_cooldown_minutes', 30)
         )
         
         # Execute the unified trading system
