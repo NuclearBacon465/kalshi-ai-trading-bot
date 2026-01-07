@@ -17,13 +17,13 @@ from utils.database import DatabaseManager
 async def init_database():
     """Initialize the database with required tables."""
     print("🗄️  Initializing database...")
-    
+
     try:
         # Initialize database manager
         db_manager = DatabaseManager()
-        
-        # Create tables
-        await db_manager.create_tables()
+
+        # Initialize schema (create tables)
+        await db_manager.initialize()
         
         print("✅ Database initialized successfully!")
         print("📊 Created tables:")

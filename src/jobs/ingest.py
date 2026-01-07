@@ -99,6 +99,7 @@ async def run_ingestion(
     db_manager: DatabaseManager,
     queue: asyncio.Queue,
     market_ticker: Optional[str] = None,
+    kalshi_client: Optional[KalshiClient] = None,
 ):
     """
     Main function for the market ingestion job.
@@ -111,7 +112,11 @@ async def run_ingestion(
     logger = get_trading_logger("market_ingestion")
     logger.info("Starting market ingestion job.", market_ticker=market_ticker)
 
-    kalshi_client = KalshiClient()
+    if kalshi_client is None:
+        kalshi_client = KalshiClient()
+        should_close_client = True
+    else:
+        should_close_client = False
 
     global _last_full_ingestion_ts
     try:
@@ -202,5 +207,6 @@ async def run_ingestion(
             "An error occurred during market ingestion.", error=str(e), exc_info=True
         )
     finally:
-        await kalshi_client.close()
+        if should_close_client:
+            await kalshi_client.close()
         logger.info("Market ingestion job finished.")

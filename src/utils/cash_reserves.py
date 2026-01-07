@@ -66,7 +66,7 @@ class CashReservesManager:
         self.critical_threshold_pct = 0.05   # DECREASED: 0.05% critical threshold (was 0.1%)
         
         # Additional safety parameters - MORE AGGRESSIVE
-        self.max_single_trade_impact = 5.0   # INCREASED: Allow 5% portfolio impact per trade (was 3%)
+        self.max_single_trade_impact = 25.0  # AGGRESSIVE MODE: Allow 25% portfolio impact per trade for low-balance trading
         self.buffer_for_opportunities = 0.5  # DECREASED: Only 0.5% buffer (was 1%)
         
     async def check_cash_reserves(

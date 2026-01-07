@@ -5,7 +5,7 @@ Enhanced evaluation system with cost monitoring and trading performance analysis
 import asyncio
 import aiosqlite
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from src.utils.database import DatabaseManager
 from src.config.settings import settings
@@ -113,6 +113,8 @@ async def analyze_trading_performance(db_manager: DatabaseManager) -> Dict:
     logger = get_trading_logger("trading_performance")
     
     week_ago = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+    rolling_window_days = 30
+    rolling_window_start = (datetime.now() - timedelta(days=rolling_window_days)).strftime('%Y-%m-%d')
     
     async with aiosqlite.connect(db_manager.db_path) as db:
         # Overall P&L
@@ -148,6 +150,14 @@ async def analyze_trading_performance(db_manager: DatabaseManager) -> Dict:
             FROM positions WHERE status = 'open'
         """)
         position_stats = await cursor.fetchone()
+
+        cursor = await db.execute("""
+            SELECT pnl, entry_price, quantity, exit_timestamp
+            FROM trade_logs
+            WHERE DATE(exit_timestamp) >= ?
+            ORDER BY exit_timestamp ASC
+        """, (rolling_window_start,))
+        rolling_trades = await cursor.fetchall()
     
     total_trades = perf_stats[0] if perf_stats and perf_stats[0] is not None else 0
     total_pnl = perf_stats[1] if perf_stats and perf_stats[1] is not None else 0.0
@@ -157,6 +167,8 @@ async def analyze_trading_performance(db_manager: DatabaseManager) -> Dict:
     avg_pnl = perf_stats[2] if perf_stats and perf_stats[2] is not None else 0.0
     open_positions = position_stats[0] if position_stats and position_stats[0] is not None else 0
     avg_hours_held = position_stats[1] if position_stats and position_stats[1] is not None else 0.0
+
+    rolling_metrics = _calculate_rolling_performance(rolling_trades)
     
     logger.info(
         "Trading Performance Report",
@@ -165,7 +177,12 @@ async def analyze_trading_performance(db_manager: DatabaseManager) -> Dict:
         win_rate=win_rate,
         avg_pnl=avg_pnl,
         open_positions=open_positions,
-        avg_hours_held=avg_hours_held
+        avg_hours_held=avg_hours_held,
+        rolling_window_days=rolling_window_days,
+        rolling_win_rate=rolling_metrics["win_rate"],
+        rolling_max_drawdown=rolling_metrics["max_drawdown"],
+        rolling_sharpe=rolling_metrics["sharpe_ratio"],
+        rolling_trades=rolling_metrics["total_trades"]
     )
     
     return {
@@ -173,8 +190,83 @@ async def analyze_trading_performance(db_manager: DatabaseManager) -> Dict:
         'total_pnl': total_pnl,
         'win_rate': win_rate,
         'exit_reasons': exit_reasons,
-        'position_stats': position_stats
+        'position_stats': position_stats,
+        'rolling_metrics': rolling_metrics
     }
+
+def _calculate_rolling_performance(trades: List[tuple]) -> Dict[str, float]:
+    """Calculate rolling win rate, max drawdown, and Sharpe ratio from recent trades."""
+    total_trades = len(trades)
+    if total_trades == 0:
+        return {
+            "total_trades": 0,
+            "win_rate": 0.0,
+            "max_drawdown": 0.0,
+            "sharpe_ratio": 0.0
+        }
+
+    wins = 0
+    returns: List[float] = []
+    equity_curve: List[float] = []
+    cumulative_pnl = 0.0
+
+    for pnl, entry_price, quantity, _exit_timestamp in trades:
+        trade_pnl = pnl or 0.0
+        if trade_pnl > 0:
+            wins += 1
+        notional = abs((entry_price or 0.0) * (quantity or 0))
+        normalized_return = trade_pnl / max(1.0, notional)
+        returns.append(normalized_return)
+        cumulative_pnl += trade_pnl
+        equity_curve.append(cumulative_pnl)
+
+    win_rate = wins / max(1, total_trades)
+
+    running_max = 0.0
+    max_drawdown = 0.0
+    for value in equity_curve:
+        running_max = max(running_max, value)
+        if running_max > 0:
+            drawdown = (running_max - value) / running_max
+            max_drawdown = max(max_drawdown, drawdown)
+
+    mean_return = sum(returns) / max(1, len(returns))
+    variance = sum((r - mean_return) ** 2 for r in returns) / max(1, len(returns) - 1)
+    std_dev = variance ** 0.5 if variance > 0 else 0.0
+    sharpe_ratio = 0.0
+    if std_dev > 0:
+        sharpe_ratio = (mean_return / std_dev) * (len(returns) ** 0.5)
+
+    return {
+        "total_trades": total_trades,
+        "win_rate": win_rate,
+        "max_drawdown": max_drawdown,
+        "sharpe_ratio": sharpe_ratio
+    }
+
+def _assess_live_readiness(rolling_metrics: Dict[str, float]) -> Tuple[bool, List[str]]:
+    """Assess readiness for live trading based on rolling performance metrics."""
+    min_trades = 25
+    min_win_rate = 0.55
+    min_sharpe = 1.0
+    max_drawdown = 0.2
+
+    reasons = []
+    total_trades = int(rolling_metrics.get("total_trades", 0))
+    win_rate = rolling_metrics.get("win_rate", 0.0)
+    sharpe_ratio = rolling_metrics.get("sharpe_ratio", 0.0)
+    rolling_drawdown = rolling_metrics.get("max_drawdown", 0.0)
+
+    if total_trades < min_trades:
+        reasons.append(f"Only {total_trades} trades in rolling window (min {min_trades})")
+    if win_rate < min_win_rate:
+        reasons.append(f"Win rate {win_rate:.1%} below {min_win_rate:.0%}")
+    if sharpe_ratio < min_sharpe:
+        reasons.append(f"Sharpe {sharpe_ratio:.2f} below {min_sharpe:.2f}")
+    if rolling_drawdown > max_drawdown:
+        reasons.append(f"Max drawdown {rolling_drawdown:.1%} above {max_drawdown:.0%}")
+
+    return len(reasons) == 0, reasons
 
 async def run_evaluation():
     """
@@ -192,6 +284,8 @@ async def run_evaluation():
         
         # Analyze trading performance
         performance_analysis = await analyze_trading_performance(db_manager)
+        rolling_metrics = performance_analysis.get("rolling_metrics", {})
+        ready_for_live, readiness_reasons = _assess_live_readiness(rolling_metrics)
         
         # Generate overall system health summary
         daily_cost = cost_analysis['daily_costs'][datetime.now().strftime('%Y-%m-%d')]['cost']
@@ -208,8 +302,49 @@ async def run_evaluation():
             status=health_status,
             daily_budget_used=f"{budget_utilization:.1%}",
             total_recommendations=len(cost_analysis['recommendations']),
-            open_positions=performance_analysis.get('position_stats', [0])[0] if performance_analysis.get('position_stats') else 0
+            open_positions=performance_analysis.get('position_stats', [0])[0] if performance_analysis.get('position_stats') else 0,
+            ready_for_live=ready_for_live,
+            live_readiness_reasons=readiness_reasons
         )
+
+        health_score = max(
+            0.0,
+            min(
+                100.0,
+                100.0
+                * (
+                    0.5 * rolling_metrics.get("win_rate", 0.0)
+                    + 0.3 * (1.0 - rolling_metrics.get("max_drawdown", 0.0))
+                    + 0.2 * min(2.0, max(0.0, rolling_metrics.get("sharpe_ratio", 0.0))) / 2.0
+                )
+            )
+        )
+
+        async with aiosqlite.connect(db_manager.db_path) as db:
+            await db.execute("""
+                INSERT INTO analysis_reports
+                (timestamp, health_score, critical_issues, warnings, action_items, report_file,
+                 rolling_win_rate, rolling_max_drawdown, rolling_sharpe, ready_for_live)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                datetime.now().isoformat(),
+                health_score,
+                0,
+                len(cost_analysis.get("recommendations", [])),
+                0,
+                None,
+                rolling_metrics.get("win_rate", 0.0),
+                rolling_metrics.get("max_drawdown", 0.0),
+                rolling_metrics.get("sharpe_ratio", 0.0),
+                int(ready_for_live)
+            ))
+            await db.commit()
+        
+        if not ready_for_live:
+            logger.warning(
+                "Live trading readiness check failed",
+                reasons=readiness_reasons
+            )
         
         # If costs are high, suggest immediate actions
         if budget_utilization > 0.8:
