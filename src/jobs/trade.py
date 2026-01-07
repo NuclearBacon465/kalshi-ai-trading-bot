@@ -25,6 +25,7 @@ from src.clients.xai_client import XAIClient
 from src.utils.database import DatabaseManager
 from src.config.settings import settings
 from src.utils.logging_setup import get_trading_logger
+from src.utils.safety import should_halt_trading
 
 # Import the new unified system
 from src.strategies.unified_trading_system import (
@@ -59,6 +60,9 @@ async def run_trading_job(
     logger = get_trading_logger("trading_job")
     
     try:
+        if should_halt_trading(logger):
+            return TradingSystemResults()
+
         logger.info("🚀 Starting Enhanced Trading Job - Beast Mode Activated!")
         
         # Initialize clients
