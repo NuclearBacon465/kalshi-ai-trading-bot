@@ -225,6 +225,13 @@ class AdvancedMarketMaker:
             yes_size, no_size = self._calculate_optimal_sizes(
                 yes_edge, no_edge, volatility, ai_confidence
             )
+
+            if yes_size <= 0 and no_size <= 0:
+                self.logger.info(
+                    "❌ Skipping market making for %s - position sizes exceed caps",
+                    market.market_id,
+                )
+                return None
             
             return MarketMakingOpportunity(
                 market_id=market.market_id,
@@ -289,7 +296,44 @@ class AdvancedMarketMaker:
         try:
             # Available capital for market making
             available_capital = getattr(settings.trading, 'max_position_size', 1000)
-            
+            max_position_size_usd = getattr(settings.trading, "max_position_size_usd", None)
+            max_position_size_pct = getattr(settings.trading, "max_position_size_pct", None)
+            max_position_size_pct_value = None
+            total_capital = getattr(settings.trading, "total_capital", None)
+            if total_capital and max_position_size_pct is not None:
+                max_position_size_pct_value = total_capital * (max_position_size_pct / 100)
+
+            if (
+                max_position_size_usd is not None
+                and max_position_size_pct_value is not None
+                and available_capital > max_position_size_usd
+                and available_capital > max_position_size_pct_value
+            ):
+                self.logger.info(
+                    "❌ Skipping market making sizing - capital $%.2f exceeds caps: %s%% ($%.2f) and USD cap $%.2f",
+                    available_capital,
+                    max_position_size_pct,
+                    max_position_size_pct_value,
+                    max_position_size_usd,
+                )
+                return 0, 0
+
+            effective_capital = available_capital
+            if max_position_size_usd is not None and effective_capital > max_position_size_usd:
+                effective_capital = max_position_size_usd
+            if max_position_size_pct_value is not None and effective_capital > max_position_size_pct_value:
+                effective_capital = max_position_size_pct_value
+
+            if effective_capital <= 0:
+                return 0, 0
+
+            if effective_capital < available_capital:
+                self.logger.info(
+                    "⚠️ Capping market making capital from $%.2f to $%.2f",
+                    available_capital,
+                    effective_capital,
+                )
+
             # Kelly fraction calculation
             # f* = (bp - q) / b where b=odds, p=win_prob, q=lose_prob
             
@@ -297,17 +341,17 @@ class AdvancedMarketMaker:
             if yes_edge > 0:
                 win_prob = 0.5 + (yes_edge * confidence)
                 kelly_yes = max(0, min(0.25, (win_prob - 0.5) / 0.5))  # Cap at 25%
-                yes_size = int(available_capital * kelly_yes)
+                yes_size = int(effective_capital * kelly_yes)
             else:
-                yes_size = int(available_capital * 0.05)  # Small size for unfavorable
+                yes_size = int(effective_capital * 0.05)  # Small size for unfavorable
             
             # For NO side  
             if no_edge > 0:
                 win_prob = 0.5 + (no_edge * confidence)
                 kelly_no = max(0, min(0.25, (win_prob - 0.5) / 0.5))
-                no_size = int(available_capital * kelly_no)
+                no_size = int(effective_capital * kelly_no)
             else:
-                no_size = int(available_capital * 0.05)
+                no_size = int(effective_capital * 0.05)
             
             # Ensure minimum sizes
             yes_size = max(10, yes_size)  # Minimum $10

@@ -3,8 +3,10 @@ Database manager for the Kalshi trading system.
 """
 
 import aiosqlite
+import json
 from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Optional, List, Dict
 
 from src.utils.logging_setup import TradingLoggerMixin
@@ -23,6 +25,7 @@ class Market:
     status: str
     last_updated: datetime
     has_position: bool = False
+
 
 @dataclass
 class Position:
@@ -45,6 +48,27 @@ class Position:
     max_hold_hours: Optional[int] = None  # Maximum hours to hold position
     target_confidence_change: Optional[float] = None  # Exit if confidence drops by this amount
 
+
+@dataclass
+class Order:
+    """Represents an order synced from Kalshi."""
+    order_id: str
+    ticker: str
+    status: str
+    side: Optional[str] = None
+    action: Optional[str] = None
+    type: Optional[str] = None
+    yes_price: Optional[int] = None
+    no_price: Optional[int] = None
+    count: Optional[int] = None
+    remaining_count: Optional[int] = None
+    created_ts: Optional[int] = None
+    updated_ts: Optional[int] = None
+    client_order_id: Optional[str] = None
+    expiration_ts: Optional[int] = None
+    last_synced: Optional[datetime] = None
+
+
 @dataclass
 class TradeLog:
     """Represents a closed trade for logging and analysis."""
@@ -59,6 +83,7 @@ class TradeLog:
     rationale: str
     strategy: Optional[str] = None  # Strategy that created this trade
     id: Optional[int] = None
+
 
 @dataclass
 class LLMQuery:
@@ -79,9 +104,16 @@ class LLMQuery:
 class DatabaseManager(TradingLoggerMixin):
     """Manages database operations for the trading system."""
 
-    def __init__(self, db_path: str = "trading_system.db"):
+    def __init__(
+        self,
+        db_path: str = "trading_system.db",
+        state_path: str = "trading_state.json",
+        failure_threshold: int = 3
+    ):
         """Initialize database connection."""
         self.db_path = db_path
+        self.state_path = Path(state_path)
+        self.failure_threshold = failure_threshold
         self.logger.info("Initializing database manager", db_path=db_path)
 
     async def initialize(self) -> None:
@@ -92,54 +124,60 @@ class DatabaseManager(TradingLoggerMixin):
             await db.commit()
         self.logger.info("Database initialized successfully")
 
-    async def _run_migrations(self, db: aiosqlite.Connection) -> None:
-        """Run database migrations for schema updates."""
+    def _load_state(self) -> Dict:
+        if not self.state_path.exists():
+            return {
+                "failure_count": 0,
+                "safe_mode": False,
+                "last_failure_at": None,
+                "last_failure_reason": None,
+                "manual_reset_at": None
+            }
         try:
-            # Migration 1: Add strategy column to positions table
-            cursor = await db.execute("PRAGMA table_info(positions)")
-            columns = await cursor.fetchall()
-            column_names = [col[1] for col in columns]
-            
-            if 'strategy' not in column_names:
-                self.logger.info("Adding strategy column to positions table")
-                await db.execute("ALTER TABLE positions ADD COLUMN strategy TEXT")
-            
-            # Migration 2: Add strategy column to trade_logs table
-            cursor = await db.execute("PRAGMA table_info(trade_logs)")
-            columns = await cursor.fetchall()
-            column_names = [col[1] for col in columns]
-            
-            if 'strategy' not in column_names:
-                self.logger.info("Adding strategy column to trade_logs table")
-                await db.execute("ALTER TABLE trade_logs ADD COLUMN strategy TEXT")
-            
-            # Migration 3: Add LLM queries table if it doesn't exist
-            cursor = await db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='llm_queries'")
-            table_exists = await cursor.fetchone()
-            
-            if not table_exists:
-                self.logger.info("Creating llm_queries table")
-                await db.execute("""
-                    CREATE TABLE llm_queries (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        timestamp TEXT NOT NULL,
-                        strategy TEXT NOT NULL,
-                        query_type TEXT NOT NULL,
-                        market_id TEXT,
-                        prompt TEXT NOT NULL,
-                        response TEXT NOT NULL,
-                        tokens_used INTEGER,
-                        cost_usd REAL,
-                        confidence_extracted REAL,
-                        decision_extracted TEXT
-                    )
-                """)
-                
-                            # Migration 4: Update existing positions with strategy based on rationale
-            await self._migrate_existing_strategy_data(db)
-            
-        except Exception as e:
-            self.logger.error(f"Error running migrations: {e}")
+            return json.loads(self.state_path.read_text())
+        except json.JSONDecodeError:
+            self.logger.error("Failed to decode trading state file; resetting state", state_path=str(self.state_path))
+            return {
+                "failure_count": 0,
+                "safe_mode": False,
+                "last_failure_at": None,
+                "last_failure_reason": None,
+                "manual_reset_at": None
+            }
+
+    def _save_state(self, state: Dict) -> None:
+        self.state_path.write_text(json.dumps(state, indent=2, sort_keys=True))
+
+    def is_safe_mode(self) -> bool:
+        state = self._load_state()
+        return bool(state.get("safe_mode", False))
+
+    def get_safe_mode_state(self) -> Dict:
+        return self._load_state()
+
+    def record_failure(self, reason: str) -> None:
+        state = self._load_state()
+        state["failure_count"] = int(state.get("failure_count", 0)) + 1
+        state["last_failure_at"] = datetime.now().isoformat()
+        state["last_failure_reason"] = reason
+        if state["failure_count"] >= self.failure_threshold:
+            if not state.get("safe_mode"):
+                self.logger.warning(
+                    "Safe mode enabled due to repeated failures",
+                    failure_count=state["failure_count"],
+                    failure_threshold=self.failure_threshold,
+                    reason=reason
+                )
+            state["safe_mode"] = True
+        self._save_state(state)
+
+    def reset_safe_mode(self) -> None:
+        state = self._load_state()
+        state["failure_count"] = 0
+        state["safe_mode"] = False
+        state["manual_reset_at"] = datetime.now().isoformat()
+        self._save_state(state)
+        self.logger.info("Safe mode reset manually", state_path=str(self.state_path))
 
     async def _migrate_existing_strategy_data(self, db: aiosqlite.Connection) -> None:
         """Migrate existing position data to include strategy information."""
@@ -269,6 +307,26 @@ class DatabaseManager(TradingLoggerMixin):
         """)
 
         await db.execute("""
+            CREATE TABLE IF NOT EXISTS orders (
+                order_id TEXT PRIMARY KEY,
+                ticker TEXT NOT NULL,
+                status TEXT NOT NULL,
+                side TEXT,
+                action TEXT,
+                type TEXT,
+                yes_price INTEGER,
+                no_price INTEGER,
+                count INTEGER,
+                remaining_count INTEGER,
+                created_ts INTEGER,
+                updated_ts INTEGER,
+                client_order_id TEXT,
+                expiration_ts INTEGER,
+                last_synced TEXT NOT NULL
+            )
+        """)
+
+        await db.execute("""
             CREATE TABLE IF NOT EXISTS market_analyses (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 market_id TEXT NOT NULL,
@@ -324,38 +382,68 @@ class DatabaseManager(TradingLoggerMixin):
         await db.execute("CREATE INDEX IF NOT EXISTS idx_market_analyses_timestamp ON market_analyses(analysis_timestamp)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_daily_cost_date ON daily_cost_tracking(date)")
         
-        # Run migrations to ensure schema is up to date
-        await self._run_migrations(db)
-        
         self.logger.info("Tables created or already exist.")
 
     async def _run_migrations(self, db: aiosqlite.Connection) -> None:
         """Run database migrations to ensure schema is up to date."""
         try:
-            # Check if positions table has the new columns
             cursor = await db.execute("PRAGMA table_info(positions)")
             columns = await cursor.fetchall()
             column_names = [col[1] for col in columns]
-            
-            # Add missing columns for enhanced exit strategy
+
+            if 'strategy' not in column_names:
+                self.logger.info("Adding strategy column to positions table")
+                await db.execute("ALTER TABLE positions ADD COLUMN strategy TEXT")
+
             if 'stop_loss_price' not in column_names:
                 await db.execute("ALTER TABLE positions ADD COLUMN stop_loss_price REAL")
                 self.logger.info("Added stop_loss_price column to positions table")
-                
+
             if 'take_profit_price' not in column_names:
                 await db.execute("ALTER TABLE positions ADD COLUMN take_profit_price REAL")
                 self.logger.info("Added take_profit_price column to positions table")
-                
+
             if 'max_hold_hours' not in column_names:
                 await db.execute("ALTER TABLE positions ADD COLUMN max_hold_hours INTEGER")
                 self.logger.info("Added max_hold_hours column to positions table")
-                
+
             if 'target_confidence_change' not in column_names:
                 await db.execute("ALTER TABLE positions ADD COLUMN target_confidence_change REAL")
                 self.logger.info("Added target_confidence_change column to positions table")
-                
+
+            cursor = await db.execute("PRAGMA table_info(trade_logs)")
+            columns = await cursor.fetchall()
+            trade_column_names = [col[1] for col in columns]
+
+            if 'strategy' not in trade_column_names:
+                self.logger.info("Adding strategy column to trade_logs table")
+                await db.execute("ALTER TABLE trade_logs ADD COLUMN strategy TEXT")
+
+            cursor = await db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='llm_queries'")
+            table_exists = await cursor.fetchone()
+
+            if not table_exists:
+                self.logger.info("Creating llm_queries table")
+                await db.execute("""
+                    CREATE TABLE llm_queries (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        timestamp TEXT NOT NULL,
+                        strategy TEXT NOT NULL,
+                        query_type TEXT NOT NULL,
+                        market_id TEXT,
+                        prompt TEXT NOT NULL,
+                        response TEXT NOT NULL,
+                        tokens_used INTEGER,
+                        cost_usd REAL,
+                        confidence_extracted REAL,
+                        decision_extracted TEXT
+                    )
+                """)
+
+            await self._migrate_existing_strategy_data(db)
+
             await db.commit()
-            
+
         except Exception as e:
             self.logger.error(f"Error running migrations: {e}")
 
@@ -393,19 +481,88 @@ class DatabaseManager(TradingLoggerMixin):
             await db.commit()
             self.logger.info(f"Upserted {len(markets)} markets.")
 
-    async def get_eligible_markets(self, volume_min: int, max_days_to_expiry: int) -> List[Market]:
+    async def upsert_orders(self, orders: List[Order]):
+        """
+        Upsert a list of orders into the database.
+
+        Args:
+            orders: A list of Order dataclass objects.
+        """
+        if not orders:
+            return
+
+        async with aiosqlite.connect(self.db_path) as db:
+            order_dicts = []
+            for order in orders:
+                order_dict = asdict(order)
+                order_dict['last_synced'] = (
+                    order.last_synced.isoformat()
+                    if order.last_synced
+                    else datetime.utcnow().isoformat()
+                )
+                order_dicts.append(order_dict)
+
+            await db.executemany("""
+                INSERT INTO orders (
+                    order_id, ticker, status, side, action, type, yes_price, no_price, count,
+                    remaining_count, created_ts, updated_ts, client_order_id, expiration_ts, last_synced
+                )
+                VALUES (
+                    :order_id, :ticker, :status, :side, :action, :type, :yes_price, :no_price, :count,
+                    :remaining_count, :created_ts, :updated_ts, :client_order_id, :expiration_ts, :last_synced
+                )
+                ON CONFLICT(order_id) DO UPDATE SET
+                    ticker=excluded.ticker,
+                    status=excluded.status,
+                    side=excluded.side,
+                    action=excluded.action,
+                    type=excluded.type,
+                    yes_price=excluded.yes_price,
+                    no_price=excluded.no_price,
+                    count=excluded.count,
+                    remaining_count=excluded.remaining_count,
+                    created_ts=excluded.created_ts,
+                    updated_ts=excluded.updated_ts,
+                    client_order_id=excluded.client_order_id,
+                    expiration_ts=excluded.expiration_ts,
+                    last_synced=excluded.last_synced
+            """, order_dicts)
+            await db.commit()
+            self.logger.info(f"Upserted {len(orders)} orders.")
+
+    async def update_order_status(self, order_id: str, status: str, updated_ts: Optional[int] = None):
+        """Update the status (and optionally updated_ts) for a specific order."""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("""
+                UPDATE orders
+                SET status = ?, updated_ts = COALESCE(?, updated_ts), last_synced = ?
+                WHERE order_id = ?
+            """, (status, updated_ts, datetime.utcnow().isoformat(), order_id))
+            await db.commit()
+            self.logger.info(f"Updated order {order_id} status to {status}.")
+
+    async def get_eligible_markets(
+        self,
+        volume_min: int,
+        max_days_to_expiry: int,
+        last_updated_max_age_seconds: int = 30,
+    ) -> List[Market]:
         """
         Get markets that are eligible for trading.
 
         Args:
             volume_min: Minimum trading volume.
             max_days_to_expiry: Maximum days to expiration.
+            last_updated_max_age_seconds: Maximum age of market data in seconds.
         
         Returns:
             A list of eligible markets.
         """
-        now_ts = int(datetime.now().timestamp())
+        now = datetime.now()
+        now_ts = int(now.timestamp())
         max_expiry_ts = now_ts + (max_days_to_expiry * 24 * 60 * 60)
+        last_updated_cutoff = now - timedelta(seconds=last_updated_max_age_seconds)
+        last_updated_cutoff_iso = last_updated_cutoff.isoformat()
 
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
@@ -416,10 +573,33 @@ class DatabaseManager(TradingLoggerMixin):
                     expiration_ts > ? AND
                     expiration_ts <= ? AND
                     status = 'active' AND
-                    has_position = 0
-            """, (volume_min, now_ts, max_expiry_ts))
+                    has_position = 0 AND
+                    last_updated >= ?
+            """, (volume_min, now_ts, max_expiry_ts, last_updated_cutoff_iso))
             rows = await cursor.fetchall()
             
+            markets = []
+            for row in rows:
+                market_dict = dict(row)
+                market_dict['last_updated'] = datetime.fromisoformat(market_dict['last_updated'])
+                market = Market(**market_dict)
+                markets.append(market)
+            return markets
+
+    async def get_active_markets(self) -> List[Market]:
+        """
+        Get all active markets from the database.
+
+        Returns:
+            List of active markets
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("""
+                SELECT * FROM markets WHERE status = 'active'
+            """)
+            rows = await cursor.fetchall()
+
             markets = []
             for row in rows:
                 market_dict = dict(row)
@@ -814,13 +994,6 @@ class DatabaseManager(TradingLoggerMixin):
             self.logger.error(f"Error getting LLM stats: {e}")
             return {}
 
-    async def close(self):
-        """Close database connections (no-op for aiosqlite)."""
-        # aiosqlite doesn't require explicit closing of connections
-        # since we use context managers, but we provide this method
-        # for compatibility with other code that expects it
-        pass
-
     async def record_market_analysis(
         self, 
         market_id: str, 
@@ -962,6 +1135,7 @@ class DatabaseManager(TradingLoggerMixin):
     async def get_open_positions(self) -> List[Position]:
         """Get all open positions."""
         async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
             cursor = await db.execute(
                 "SELECT * FROM positions WHERE status = 'open'"
             )
@@ -969,23 +1143,22 @@ class DatabaseManager(TradingLoggerMixin):
             
             positions = []
             for row in rows:
-                # Convert database row to Position object
-                position = Position(
-                    market_id=row[1],
-                    side=row[2],
-                    entry_price=row[3],
-                    quantity=row[4],
-                    timestamp=datetime.fromisoformat(row[5]),
-                    rationale=row[6],
-                    confidence=row[7],
-                    live=bool(row[8]),
-                    status=row[9],
-                    id=row[0],
-                    stop_loss_price=row[10],
-                    take_profit_price=row[11],
-                    max_hold_hours=row[12],
-                    target_confidence_change=row[13]
-                )
-                positions.append(position)
+                position_dict = dict(row)
+                position_dict['timestamp'] = datetime.fromisoformat(position_dict['timestamp'])
+                positions.append(Position(**position_dict))
             
             return positions
+
+    async def close(self) -> None:
+        """Close database connections (no-op for aiosqlite)."""
+        return None
+
+
+if __name__ == "__main__":
+    import asyncio
+
+    async def _init_db():
+        manager = DatabaseManager()
+        await manager.initialize()
+
+    asyncio.run(_init_db())

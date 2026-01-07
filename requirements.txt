@@ -53,8 +53,11 @@ xai_sdk>=1.0.0
 pytest==7.4.3
 pytest-asyncio==0.21.1
 
+# Web dashboard
+flask==3.0.0
+
 # Development tools
 black==23.12.1
-isort==5.13.2 
+isort==5.13.2
 uvicorn
 json-repair 
