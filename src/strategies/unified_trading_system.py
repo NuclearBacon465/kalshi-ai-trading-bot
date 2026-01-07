@@ -111,6 +111,8 @@ class TradingSystemResults:
     total_positions: int = 0
     capital_efficiency: float = 0.0  # % of capital used
     expected_annual_return: float = 0.0
+    risk_cooldown_until: Optional[datetime] = None
+    risk_cooldown_reason: Optional[str] = None
 
 
 class UnifiedAdvancedTradingSystem:
@@ -797,7 +799,10 @@ class UnifiedAdvancedTradingSystem:
             if results.correlation_score > self.config.max_correlation_exposure:
                 risk_violations.append(f"Correlation {results.correlation_score:.1%} > limit {self.config.max_correlation_exposure:.1%}")
             
+            cooldown_until = None
+            cooldown_reason = None
             if risk_violations:
+                cooldown_reason = "; ".join(risk_violations)
                 self.logger.warning(f"⚠️  Risk violations detected: {risk_violations}")
                 cooldown_until = datetime.now() + timedelta(minutes=self.config.risk_cooldown_minutes)
                 from src.utils.risk_cooldown import save_risk_cooldown_state
@@ -822,6 +827,8 @@ class UnifiedAdvancedTradingSystem:
             if results.capital_efficiency < 0.8:
                 self.logger.warning(f"⚠️  Low capital efficiency: {results.capital_efficiency:.1%}")
             
+            return cooldown_until, cooldown_reason
+
         except Exception as e:
             self.logger.error(f"Error in risk management: {e}")
         return None

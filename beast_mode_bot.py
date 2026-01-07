@@ -496,6 +496,14 @@ class BeastModeBot:
                 self.logger.error(f"Error in trading cycle #{cycle_count}: {e}")
                 await asyncio.sleep(2)  # Quick recovery for high-frequency trading
 
+    async def _sleep_with_shutdown(self, total_seconds: float, chunk_size: int = 60):
+        """Sleep in chunks while allowing graceful shutdown."""
+        remaining = max(0, total_seconds)
+        while remaining > 0 and not self.shutdown_event.is_set():
+            current_chunk = min(chunk_size, remaining)
+            await asyncio.sleep(current_chunk)
+            remaining -= current_chunk
+
     async def _check_daily_ai_limits(self, xai_client: XAIClient) -> bool:
         """
         Check if we should continue trading based on daily AI cost limits.
