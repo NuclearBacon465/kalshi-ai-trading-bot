@@ -101,6 +101,14 @@ class AdvancedPortfolioOptimizer:
         kalshi_client: KalshiClient,
         xai_client: XAIClient
     ):
+        # 🔧 VALIDATION: Prevent None parameters
+        if db_manager is None:
+            raise ValueError("DatabaseManager cannot be None")
+        if kalshi_client is None:
+            raise ValueError("KalshiClient cannot be None")
+        if xai_client is None:
+            raise ValueError("XAIClient cannot be None")
+
         self.db_manager = db_manager
         self.kalshi_client = kalshi_client
         self.xai_client = xai_client
