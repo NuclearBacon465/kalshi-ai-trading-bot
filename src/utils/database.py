@@ -449,8 +449,10 @@ class DatabaseManager(TradingLoggerMixin):
         Returns:
             A list of eligible markets.
         """
-        now_ts = int(datetime.now().timestamp())
+        now = datetime.now()
+        now_ts = int(now.timestamp())
         max_expiry_ts = now_ts + (max_days_to_expiry * 24 * 60 * 60)
+        max_recency_seconds = 30
 
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
@@ -469,7 +471,17 @@ class DatabaseManager(TradingLoggerMixin):
             for row in rows:
                 market_dict = dict(row)
                 market_dict['last_updated'] = datetime.fromisoformat(market_dict['last_updated'])
-                markets.append(Market(**market_dict))
+                market = Market(**market_dict)
+                age_seconds = (now - market.last_updated).total_seconds()
+                if age_seconds > max_recency_seconds:
+                    self.logger.warning(
+                        "Skipping stale market data",
+                        market_id=market.market_id,
+                        age_seconds=round(age_seconds, 2),
+                        last_updated=market.last_updated.isoformat(),
+                    )
+                    continue
+                markets.append(market)
             return markets
 
     async def get_markets_with_positions(self) -> set[str]:
