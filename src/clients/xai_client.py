@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 import pickle
 import os
+from collections import deque
 
 import re
 from json_repair import repair_json
@@ -77,6 +78,13 @@ class XAIClient(TradingLoggerMixin):
         # Daily usage tracking
         self.daily_tracker = self._load_daily_tracker()
         self.usage_file = "logs/daily_ai_usage.pkl"
+
+        # Per-minute rate limiting
+        self.per_minute_limit = getattr(settings.trading, "ai_requests_per_minute", 60)
+        self._rate_limit_window_seconds = 60
+        self._request_timestamps = deque()
+        self._rate_limit_lock = asyncio.Lock()
+        self.deferred_log_file = "logs/deferred_ai_requests.jsonl"
         
         # API exhaustion state
         self.is_api_exhausted = False
@@ -88,8 +96,72 @@ class XAIClient(TradingLoggerMixin):
             logging_enabled=bool(db_manager),
             daily_limit=self.daily_tracker.daily_limit,
             today_cost=self.daily_tracker.total_cost,
-            today_requests=self.daily_tracker.request_count
+            today_requests=self.daily_tracker.request_count,
+            per_minute_limit=self.per_minute_limit
         )
+
+    async def _log_deferred_request(
+        self,
+        reason: str,
+        wait_seconds: float,
+        model: Optional[str],
+        messages: Optional[List[Dict]]
+    ) -> None:
+        """Log deferred requests for later execution."""
+        message_preview = None
+        if messages:
+            message_preview = str(messages[0].get("content", ""))[:500]
+
+        record = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "reason": reason,
+            "wait_seconds": round(wait_seconds, 2),
+            "model": model,
+            "message_preview": message_preview
+        }
+
+        try:
+            os.makedirs("logs", exist_ok=True)
+            with open(self.deferred_log_file, "a", encoding="utf-8") as log_file:
+                log_file.write(json.dumps(record) + "\n")
+        except Exception as e:
+            self.logger.error(f"Failed to log deferred request: {e}")
+
+    async def _enforce_per_minute_limit(
+        self,
+        model: Optional[str],
+        messages: Optional[List[Dict]]
+    ) -> None:
+        """Enforce per-minute request limits by deferring requests."""
+        if not self.per_minute_limit or self.per_minute_limit <= 0:
+            return
+
+        while True:
+            async with self._rate_limit_lock:
+                now = time.monotonic()
+                window_start = now - self._rate_limit_window_seconds
+
+                while self._request_timestamps and self._request_timestamps[0] < window_start:
+                    self._request_timestamps.popleft()
+
+                if len(self._request_timestamps) < self.per_minute_limit:
+                    self._request_timestamps.append(now)
+                    return
+
+                wait_seconds = self._rate_limit_window_seconds - (now - self._request_timestamps[0])
+
+            self.logger.info(
+                "Per-minute AI request limit reached; deferring request",
+                per_minute_limit=self.per_minute_limit,
+                wait_seconds=round(wait_seconds, 2)
+            )
+            await self._log_deferred_request(
+                reason="per_minute_rate_limit",
+                wait_seconds=wait_seconds,
+                model=model,
+                messages=messages
+            )
+            await asyncio.sleep(max(wait_seconds, 0.0))
 
     def _load_daily_tracker(self) -> DailyUsageTracker:
         """Load or create daily usage tracker."""
@@ -267,6 +339,8 @@ class XAIClient(TradingLoggerMixin):
                     return self._search_cache[cache_key]
             else:
                 self._search_cache = {}
+
+            await self._enforce_per_minute_limit(self.primary_model, [{"content": query}])
             
             self.logger.debug(
                 "Starting xAI live search",
@@ -711,6 +785,8 @@ Required format:
         
         model_to_use = model or self.primary_model
         temperature = temperature if temperature is not None else self.temperature
+
+        await self._enforce_per_minute_limit(model_to_use, messages)
         
         # Use configured token limits from settings
         from src.config.settings import settings
@@ -890,6 +966,8 @@ Required format:
             fallback_model = settings.trading.fallback_model
             
             self.logger.info(f"Attempting fallback to {fallback_model}")
+
+            await self._enforce_per_minute_limit(fallback_model, messages)
             
             # Use smaller token limit for fallback model to be conservative
             fallback_max_tokens = min(max_tokens or self.max_tokens, 4000)
