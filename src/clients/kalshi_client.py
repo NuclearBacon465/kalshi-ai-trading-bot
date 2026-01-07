@@ -179,8 +179,8 @@ class KalshiClient(TradingLoggerMixin):
                     attempt=attempt + 1
                 )
                 
-                # Add aggressive delay between requests to prevent 429s
-                await asyncio.sleep(0.5)  # 500ms delay = max 2 requests/second
+                # Add delay between requests to prevent 429s (Basic tier: 10 writes/sec)
+                await asyncio.sleep(0.1)  # 100ms delay = max 10 requests/second
                 
                 response = await self.client.request(
                     method=method,
@@ -446,13 +446,9 @@ class KalshiClient(TradingLoggerMixin):
                 elif side_l == "no" and "no_price" not in order_data:
                     order_data["no_price"] = 1  # Min willing to accept for NO
 
-                # Set sell_position_floor to ensure we don't sell below 1¢
-                if "sell_position_floor" not in order_data:
-                    order_data["sell_position_floor"] = count_int * 1
-
-        # 🔧 CRITICAL FIX: ALL orders require time_in_force (use Kalshi's abbreviation "gtc")
+        # 🔧 CRITICAL FIX: ALL orders require time_in_force (official Kalshi API requires full string)
         if "time_in_force" not in order_data:
-            order_data["time_in_force"] = "gtc"  # good-til-canceled
+            order_data["time_in_force"] = "good_till_canceled"  # Official Kalshi API value
 
         # DEBUG: Log the exact order data being sent
         self.logger.info(f"📤 Sending order to Kalshi API: {order_data}")
