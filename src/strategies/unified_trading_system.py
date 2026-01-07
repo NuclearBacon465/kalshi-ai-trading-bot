@@ -32,6 +32,7 @@ from src.clients.xai_client import XAIClient
 from src.utils.database import DatabaseManager, Market, Position
 from src.config.settings import settings
 from src.utils.logging_setup import get_trading_logger
+from src.utils.safety import should_halt_trading
 
 from src.strategies.market_making import (
     AdvancedMarketMaker, 
@@ -223,6 +224,9 @@ class UnifiedAdvancedTradingSystem:
         6. Monitor and rebalance as needed
         """
         self.logger.info("🚀 Executing Unified Advanced Trading Strategy")
+
+        if should_halt_trading(self.logger):
+            return TradingSystemResults()
         
         try:
             # Step 0: Check and enforce position limits AND cash reserves

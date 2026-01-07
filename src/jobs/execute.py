@@ -9,8 +9,8 @@ from datetime import datetime
 from typing import Optional, Dict
 
 from src.utils.database import DatabaseManager, Position
-from src.config.settings import settings
 from src.utils.logging_setup import get_trading_logger
+from src.utils.safety import enforce_kill_switch
 from src.clients.kalshi_client import KalshiClient, KalshiAPIError
 
 async def execute_position(
@@ -33,6 +33,7 @@ async def execute_position(
     """
     logger = get_trading_logger("trade_execution")
     logger.info(f"Executing position for market: {position.market_id}")
+    live_mode = enforce_kill_switch(live_mode, logger)
 
     if live_mode:
         try:
