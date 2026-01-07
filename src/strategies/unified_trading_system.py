@@ -489,6 +489,38 @@ class UnifiedAdvancedTradingSystem:
                     
                     # Calculate initial position size
                     initial_position_value = allocation_fraction * self.directional_capital
+
+                    max_position_size_usd = getattr(settings.trading, "max_position_size_usd", None)
+                    max_position_size_pct = getattr(settings.trading, "max_position_size_pct", None)
+                    max_position_size_pct_value = None
+                    if max_position_size_pct is not None and self.total_capital:
+                        max_position_size_pct_value = self.total_capital * (max_position_size_pct / 100)
+
+                    if (
+                        max_position_size_usd is not None
+                        and max_position_size_pct_value is not None
+                        and initial_position_value > max_position_size_usd
+                        and initial_position_value > max_position_size_pct_value
+                    ):
+                        self.logger.warning(
+                            "❌ SKIPPING %s - position $%.2f exceeds caps: %s%% ($%.2f) and USD cap $%.2f",
+                            market_id,
+                            initial_position_value,
+                            max_position_size_pct,
+                            max_position_size_pct_value,
+                            max_position_size_usd,
+                        )
+                        results['failed_executions'] += 1
+                        continue
+
+                    if max_position_size_usd is not None and initial_position_value > max_position_size_usd:
+                        self.logger.info(
+                            "⚠️ Capping position size from $%.2f to USD cap $%.2f for %s",
+                            initial_position_value,
+                            max_position_size_usd,
+                            market_id,
+                        )
+                        initial_position_value = max_position_size_usd
                     
                     # Check position limits and adjust if needed
                     from src.utils.position_limits import check_can_add_position
