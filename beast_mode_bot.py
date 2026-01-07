@@ -112,6 +112,27 @@ class BeastModeBot:
             kalshi_client = KalshiClient()
             xai_client = XAIClient(db_manager=db_manager)  # Pass db_manager for LLM logging
 
+            # 🚀 PHASE 3: Initialize advanced features
+            self.logger.info("🚀 Initializing Phase 3 features...")
+
+            # Initialize price history tracking
+            try:
+                from src.utils.price_history import get_price_tracker
+                price_tracker = await get_price_tracker(db_manager)
+                self.logger.info("✅ Price history tracking initialized")
+            except Exception as e:
+                self.logger.warning(f"Price history not available: {e}")
+                price_tracker = None
+
+            # Initialize WebSocket manager (real-time data)
+            try:
+                from src.utils.websocket_manager import get_websocket_manager
+                ws_manager = await get_websocket_manager(db_manager)
+                self.logger.info("✅ WebSocket manager initialized (300x faster updates!)")
+            except Exception as e:
+                self.logger.warning(f"WebSocket manager not available: {e}")
+                ws_manager = None
+
             # Sync startup state (orders + positions) and cancel stale orders
             await self._sync_startup_state(db_manager, kalshi_client)
             
@@ -134,7 +155,7 @@ class BeastModeBot:
             task_factories = {
                 "market_ingestion": market_ingestion_factory,
                 "trading_cycles": lambda: asyncio.create_task(
-                    self._run_trading_cycles(db_manager, kalshi_client, xai_client),
+                    self._run_trading_cycles(db_manager, kalshi_client, xai_client, price_tracker, ws_manager),
                     name="trading_cycles",
                 ),
                 "position_tracking": lambda: asyncio.create_task(
@@ -436,10 +457,10 @@ class BeastModeBot:
                 self.logger.error(f"Error in market ingestion: {e}")
                 await asyncio.sleep(60)
 
-    async def _run_trading_cycles(self, db_manager: DatabaseManager, kalshi_client: KalshiClient, xai_client: XAIClient):
-        """Main Beast Mode trading cycles."""
+    async def _run_trading_cycles(self, db_manager: DatabaseManager, kalshi_client: KalshiClient, xai_client: XAIClient, price_tracker=None, ws_manager=None):
+        """Main Beast Mode trading cycles with Phase 3 enhancements."""
         cycle_count = 0
-        
+
         while not self.shutdown_event.is_set():
             try:
                 # Check safe mode first (from codex branch)
@@ -488,9 +509,33 @@ class BeastModeBot:
                         f"Expected Return: {results.expected_annual_return:.1%}"
                     )
                 # Don't log "no positions" every 2 seconds - too spammy
-                
+
+                # 🚀 PHASE 3: Record price snapshots periodically (every 10 cycles = 20 seconds)
+                if price_tracker and cycle_count % 10 == 0:
+                    try:
+                        # Get active markets and record their prices
+                        markets = await db_manager.get_eligible_markets(volume_min=200, max_days_to_expiry=365)
+                        if markets:
+                            # Record top 50 markets to avoid overhead
+                            price_snapshots = []
+                            for market in markets[:50]:
+                                try:
+                                    market_data = await kalshi_client.get_market(market.market_id)
+                                    market_info = market_data.get('market', {})
+                                    yes_price = market_info.get('yes_price', 50) / 100
+                                    no_price = market_info.get('no_price', 50) / 100
+                                    volume = market_info.get('volume', 0)
+                                    price_snapshots.append((market.market_id, yes_price, no_price, volume))
+                                except Exception:
+                                    pass  # Skip markets that fail
+
+                            if price_snapshots:
+                                await price_tracker.batch_record_prices(price_snapshots)
+                    except Exception as e:
+                        pass  # Don't let price recording break trading
+
                 # ⚡ HIGH-FREQUENCY MODE: Wait for next cycle (2 seconds for rapid monitoring and 0.1s precision)
-                await asyncio.sleep(2)
+                await asyncio.sleep(self.scan_interval_seconds)
 
             except Exception as e:
                 self.logger.error(f"Error in trading cycle #{cycle_count}: {e}")

@@ -150,14 +150,39 @@ async def execute_position(
                 order_type="market"
             )
 
-            order_response = await kalshi_client.place_order(
-                ticker=position.market_id,
-                client_order_id=client_order_id,
-                side=position.side.lower(),
-                action="buy",
-                count=position.quantity,
-                type_="market"
-            )
+            # 🚀 PHASE 3: Use smart limit orders by default for better fills
+            if hasattr(kalshi_client, 'place_smart_limit_order'):
+                try:
+                    logger.info(f"💡 Using smart limit order for {position.market_id}")
+                    order_response = await kalshi_client.place_smart_limit_order(
+                        ticker=position.market_id,
+                        client_order_id=client_order_id,
+                        side=position.side.lower(),
+                        action="buy",
+                        count=position.quantity,
+                        target_price=position.entry_price,  # Use expected entry price
+                        max_slippage_pct=0.02  # 2% slippage tolerance
+                    )
+                except Exception as e:
+                    logger.warning(f"Smart limit order failed, using market order fallback: {e}")
+                    order_response = await kalshi_client.place_order(
+                        ticker=position.market_id,
+                        client_order_id=client_order_id,
+                        side=position.side.lower(),
+                        action="buy",
+                        count=position.quantity,
+                        type_="market"
+                    )
+            else:
+                # Fallback to regular market order if smart limits not available
+                order_response = await kalshi_client.place_order(
+                    ticker=position.market_id,
+                    client_order_id=client_order_id,
+                    side=position.side.lower(),
+                    action="buy",
+                    count=position.quantity,
+                    type_="market"
+                )
             
             # Fetch fills with exponential backoff to get actual execution price
             fills = await fetch_fills_with_backoff(position.market_id, client_order_id)

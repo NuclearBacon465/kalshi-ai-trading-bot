@@ -17,6 +17,19 @@ import math
 
 from src.utils.database import DatabaseManager, Position
 
+# 🚀 PHASE 3: Enhanced with real correlation and volatility data
+try:
+    from src.utils.market_correlation import MarketCorrelationAnalyzer
+    CORRELATION_AVAILABLE = True
+except ImportError:
+    CORRELATION_AVAILABLE = False
+
+try:
+    from src.utils.price_history import get_price_tracker
+    PRICE_HISTORY_AVAILABLE = True
+except ImportError:
+    PRICE_HISTORY_AVAILABLE = False
+
 
 @dataclass
 class PositionSizeRecommendation:
@@ -81,30 +94,48 @@ class AdvancedPositionSizer:
 
         return kelly_fraction
 
-    def calculate_market_volatility(
+    async def calculate_market_volatility(
         self,
         ticker: str,
         price: float,
-        historical_prices: List[float] = None
+        historical_prices: List[float] = None,
+        side: str = "yes"
     ) -> float:
         """
-        Estimate market volatility.
+        Calculate market volatility using real historical data.
 
-        Uses:
-        1. Historical price volatility if available
-        2. Distance from 0.50 (middle price) as proxy
-        3. Default assumption if no data
+        Uses (in priority order):
+        1. 🚀 PHASE 3: Real historical volatility from database
+        2. Provided historical prices
+        3. Distance from 0.50 (middle price) as proxy
+        4. Default assumption if no data
 
         Returns:
             Volatility estimate (0.0 to 1.0, typically 0.05-0.30)
         """
-        # Method 1: Historical prices (best)
-        if historical_prices and len(historical_prices) >= 5:
-            returns = np.diff(historical_prices) / historical_prices[:-1]
-            volatility = np.std(returns)
-            return float(volatility)
+        # Method 1: Real historical volatility from database (BEST!)
+        if PRICE_HISTORY_AVAILABLE:
+            try:
+                price_tracker = await get_price_tracker(self.db_manager)
+                vol = await price_tracker.calculate_historical_volatility(
+                    ticker,
+                    lookback_hours=24,  # 24-hour volatility
+                    side=side
+                )
+                if vol is not None:
+                    # De-annualize and normalize to reasonable range
+                    daily_vol = vol / np.sqrt(365)
+                    return min(daily_vol, 0.50)
+            except Exception as e:
+                pass  # Fall through to other methods
 
-        # Method 2: Distance from midpoint as proxy
+        # Method 2: Historical prices (good)
+        if historical_prices and len(historical_prices) >= 5:
+            returns = np.diff(historical_prices) / np.array(historical_prices[:-1])
+            volatility = np.std(returns)
+            return float(min(volatility, 0.50))
+
+        # Method 3: Distance from midpoint as proxy (fallback)
         # Markets near 50¢ tend to be more volatile than extreme prices
         distance_from_mid = abs(price - 0.50)
         implied_volatility = 0.10 + (0.15 * (1 - 2 * distance_from_mid))
@@ -115,7 +146,7 @@ class AdvancedPositionSizer:
 
         return min(implied_volatility, 0.50)  # Cap at 50% volatility
 
-    def calculate_portfolio_correlation_risk(
+    async def calculate_portfolio_correlation_risk(
         self,
         new_ticker: str,
         existing_positions: List[Position],
@@ -123,6 +154,8 @@ class AdvancedPositionSizer:
     ) -> float:
         """
         Calculate correlation risk of adding new position to portfolio.
+
+        🚀 PHASE 3: Now uses real market correlation analysis!
 
         Args:
             new_ticker: Ticker being considered
@@ -139,6 +172,28 @@ class AdvancedPositionSizer:
 
         # Calculate average correlation with existing positions
         correlations = []
+
+        # 🚀 PHASE 3: Try to use real market correlation analyzer first
+        if CORRELATION_AVAILABLE and correlation_matrix is None:
+            try:
+                analyzer = MarketCorrelationAnalyzer(self.db_manager)
+                correlated_markets = await analyzer.find_correlated_markets(
+                    new_ticker,
+                    min_similarity=0.2
+                )
+
+                # Build correlation dict from results
+                correlation_matrix = {}
+                for market_id, similarity, corr_type in correlated_markets:
+                    corr_key = tuple(sorted([new_ticker, market_id]))
+                    # Adjust correlation based on type
+                    if corr_type == "inverse":
+                        correlation_matrix[corr_key] = -similarity
+                    else:
+                        correlation_matrix[corr_key] = similarity
+            except Exception as e:
+                # Fall through to other methods
+                pass
 
         for position in existing_positions:
             # Get correlation from matrix if available
@@ -208,8 +263,8 @@ class AdvancedPositionSizer:
         # Step 1: Base Kelly calculation
         base_kelly = self.calculate_kelly_fraction(edge, confidence)
 
-        # Step 2: Correlation adjustment
-        correlation_risk = self.calculate_portfolio_correlation_risk(
+        # Step 2: Correlation adjustment (🚀 PHASE 3: now async with real data!)
+        correlation_risk = await self.calculate_portfolio_correlation_risk(
             ticker,
             existing_positions,
             correlation_matrix
@@ -225,8 +280,8 @@ class AdvancedPositionSizer:
 
         correlation_adjusted = base_kelly * correlation_penalty
 
-        # Step 3: Volatility adjustment
-        volatility = self.calculate_market_volatility(
+        # Step 3: Volatility adjustment (🚀 PHASE 3: now async with real historical data!)
+        volatility = await self.calculate_market_volatility(
             ticker,
             current_price,
             historical_prices
