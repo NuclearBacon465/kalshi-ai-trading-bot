@@ -75,6 +75,11 @@ class TradingSystemConfig:
     rebalance_frequency_hours: int = 6  # Rebalance every 6 hours
     profit_taking_threshold: float = 0.25  # Take profits at 25%
     loss_cutting_threshold: float = 0.10  # Cut losses at 10%
+    
+    # Data freshness (from codex branch)
+    market_data_max_age_seconds: int = 30  # Skip trading on stale market data
+    
+    # Risk cooldown (from main branch)
     risk_cooldown_minutes: int = 30  # Pause new trades after risk violations
 
 
@@ -263,11 +268,13 @@ class UnifiedAdvancedTradingSystem:
                     self.logger.info(f"✅ CLOSED {enforcement_result['positions_closed']} positions to meet limits")
             
             # Step 1: Get ALL available markets (no time restrictions) - MORE PERMISSIVE VOLUME
+            # Using last_updated filtering from codex branch
             markets = await self.db_manager.get_eligible_markets(
                 volume_min=200,  # DECREASED: Much lower volume requirement (was 50,000, now 200) for more opportunities
-                max_days_to_expiry=365  # Accept any timeline with dynamic exits
+                max_days_to_expiry=365,  # Accept any timeline with dynamic exits
+                last_updated_max_age_seconds=self.config.market_data_max_age_seconds,
             )
-            markets = self._filter_stale_markets(markets)
+            
             if not markets:
                 self.logger.warning("No markets available for trading")
                 return TradingSystemResults()
@@ -314,23 +321,6 @@ class UnifiedAdvancedTradingSystem:
         except Exception as e:
             self.logger.error(f"Error in unified trading strategy: {e}")
             return TradingSystemResults()
-
-    def _filter_stale_markets(self, markets: List[Market], max_age_seconds: int = 30) -> List[Market]:
-        """Filter out stale markets and log rejections."""
-        now = datetime.now()
-        fresh_markets: List[Market] = []
-        for market in markets:
-            age_seconds = (now - market.last_updated).total_seconds()
-            if age_seconds > max_age_seconds:
-                self.logger.warning(
-                    "Skipping stale market data in unified trading system",
-                    market_id=market.market_id,
-                    age_seconds=round(age_seconds, 2),
-                    last_updated=market.last_updated.isoformat(),
-                )
-                continue
-            fresh_markets.append(market)
-        return fresh_markets
 
     async def _execute_market_making_strategy(self, markets: List[Market]) -> Dict:
         """
@@ -836,8 +826,6 @@ class UnifiedAdvancedTradingSystem:
             self.logger.error(f"Error in risk management: {e}")
         return None
 
-
-
     def get_system_performance_summary(self) -> Dict:
         """
         Get comprehensive system performance summary.
@@ -923,4 +911,4 @@ async def run_unified_trading_system(
         
     except Exception as e:
         logger.error(f"Error in unified trading system: {e}")
-        return TradingSystemResults() 
+        return TradingSystemResults()

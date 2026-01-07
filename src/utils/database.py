@@ -1,235 +1,3 @@
-
-hi
-
-2:41 PM
-Hi there! How can I help you today?
-
-
-""" Database manager for the Kalshi trading system. """ import aiosqlite import json from dataclasses import dataclass, asdict from datetime import datetime, timedelta from pathlib import Path from typing import Optional, List, Dict from src.utils.logging_setup import TradingLoggerMixin @datacla
-
-pasted
-
-please fix code
-
-2:41 PM
-I can see there are git merge conflicts in this file. Let me fix them by resolving the conflicts and keeping the best parts of both versions.
-
-
-Creating fixed database.py with merge conflicts resolved
-database.py
-
-Presented file
-I've fixed the merge conflicts in your code. The main changes were:
-
-Removed git merge conflict markers (<<<<<<< codex/add-failure-counter-and-safe-mode-to-databasemanager, =======, >>>>>>> main)
-Kept the safe mode functionality from the codex branch (the _load_state, _save_state, is_safe_mode, get_safe_mode_state, record_failure, and reset_safe_mode methods)
-Kept the cleaner _run_migrations method from the main branch (which was more consolidated)
-Kept the close method and __main__ block from the main branch
-Fixed the duplicate close method issue - there was one defined twice
-Database
-PY 
-
-""" Database manager for the Kalshi trading system. """ import aiosqlite import json from dataclasses import dataclass, asdict from datetime import datetime, timedelta from pathlib import Path from typing import Optional, List, Dict from src.utils.logging_setup import TradingLoggerMixin @datacla
-
-pasted
-
-same for this
-
-2:45 PM
-I can see another git merge conflict at the end of this file. Let me fix it:
-
-
-Creating fixed database.py with merge conflict resolved - keeping the close method and __main__ block from main branch
-database_fixed.py
-
-Presented file
-Fixed! The merge conflict was at the end of the file. I removed the conflict markers and kept:
-
-The close() method from the main branch
-The if __name__ == "__main__": block for standalone database initialization
-This version also includes the stale market data filtering logic from the codex/implement-last_updated-timestamps-and-filtering branch in the get_eligible_markets() method (with max_recency_seconds = 30).
-
-Database fixed
-PY 
-
-""" Unified Advanced Trading System - The Beast Mode 🚀 This system orchestrates all cutting-edge strategies: 1. Market Making Strategy (limit orders for spreads) 2. Advanced Portfolio Optimization (Kelly Criterion Extension) 3. Risk Parity Allocation (equal risk, not equal capital) 4. Dynamic Exit
-
-pasted
-
-fix
-
-2:57 PM
-I can see merge conflicts in this file. Let me fix them:
-
-
-1 step
-
-Remove existing file to recreate it
-
-
-Creating fixed unified_trading_system.py with merge conflicts resolved
-
-#!/usr/bin/env python3 """ Beast Mode Trading Bot 🚀 Main entry point for the Unified Advanced Trading System that orchestrates: - Market Making Strategy (40% allocation) - Directional Trading with Portfolio Optimization (50% allocation) - Arbitrage Detection (10% allocation) Features: - No time
-
-pasted
-
-
-""" XAI client for AI-powered trading decisions. Interfaces with Grok models through xAI REST API (OpenAI-compatible) for market analysis and trading strategies. """ import asyncio import json import time from typing import Dict, List, Optional, Any, Union, Tuple from dataclasses import dataclass f
-
-pasted
-
-
-""" Trade Execution Job This job takes a position and executes it as a trade. """ import asyncio import uuid from datetime import datetime from typing import Optional, Dict from src.utils.database import DatabaseManager, Position from src.utils.logging_setup import get_trading_logger from src.util
-
-pasted
-
-fix ALL
-
-3:04 PM
-
-Identified and resolved merge conflicts across three files.
-
-
-I'll fix all three files with merge conflicts.
-
-
-4 steps
-
-Creating fixed execute.py with merge conflicts resolved - combining notification support with fill verification
-execute.py
-
-I also realized I need to complete the unified_trading_system.py file that got cut off.
-
-Now let me present all the fixed files:
-
-
-4 steps
-
-Check if unified_trading_system.py was properly created
-
-
-
-Diagnosed file creation failure and resolved implementation.
-
-Let me complete the unified_trading_system.py file which got truncated:
-
-
-4 steps
-
-Presented 5 files
-
-Resolved merge conflicts and synthesized comprehensive changes.
-
-All files fixed! Here's a summary of the merge conflict resolutions:
-
-1. beast_mode_bot.py
-Fixed the _run_market_ingestion method to pass kalshi_client to run_ingestion()
-Kept the slower 300-second (5 minute) ingestion interval to prevent 429 rate limit errors
-2. xai_client.py
-Fixed the search() method to use REST API chat completion instead of the gRPC SDK
-Added the search cache initialization in __init__
-Kept the simpler approach while preserving query optimization and caching functionality
-3. execute.py
-Combined notification support (from one branch) with fill verification via backoff (from the other)
-Order flow now: place order → fetch fills with backoff → verify fill → send notifications
-Falls back to entry price if fills aren't confirmed, but still sends notifications
-4. unified_trading_system.py
-Combined market_data_max_age_seconds config and risk_cooldown_minutes config
-Removed duplicate stale market filtering (now handled in get_eligible_markets)
-Simplified the strategy execution while keeping all functionality
-5. database_fixed.py
-Kept safe mode functionality (_load_state, _save_state, is_safe_mode, etc.)
-Kept the stale market filtering in get_eligible_markets()
-Included the close() method and __main__ block
-Beast mode bot
-PY 
-Xai client
-PY 
-Execute
-PY 
-Unified trading system
-PY 
-Database fixed
-PY 
-1767817178838_image.png
-
-#!/usr/bin/env python3 """ Beast Mode Trading Bot 🚀 Main entry point for the Unified Advanced Trading System that orchestrates: - Market Making Strategy (40% allocation) - Directional Trading with Portfolio Optimization (50% allocation) - Arbitrage Detection (10% allocation) Features: - No time
-
-pasted
-
-
-""" Database manager for the Kalshi trading system. """ import aiosqlite import json from dataclasses import dataclass, asdict from datetime import datetime, timedelta from pathlib import Path from typing import Optional, List, Dict from src.utils.logging_setup import TradingLoggerMixin @datacla
-
-pasted
-
-many pr's codex has done but before i updated your changes, help me fix all these pr's please, thank you!!!! there many be multipe of same
-
-3:19 PM
-
-Analyzed merge conflicts across multiple files and reconciled divergent code branches.
-
-
-
-
-
-
-
-
-
-I see PR #20 has conflicts in both beast_mode_bot.py and database.py. Let me fix both files by combining the features from both branches.
-
-
-Hide steps
-
-Creating fixed beast_mode_bot.py - combining Order sync features from codex branch with risk_cooldown from main
-beast_mode_bot_pr20.py
-
-Reconciled conflicting code branches to preserve all functionality.
-
-
-Creating fixed database.py - combining Order dataclass and methods from codex with close() and __main__ from main
-database_pr20.py
-
-Prepared to present files for user review.
-
-
-Presented 2 files
-
-Resolved conflicting files across multiple pull requests.
-
-Fixed PR #20! Here's what I merged:
-
-beast_mode_bot_pr20.py
-Combined both branches:
-
-✅ From codex branch: Order import, _sync_startup_state(), _normalize_order(), _parse_timestamp(), _cancel_stale_orders(), _get_price_reference(), orders table check in _ensure_database_ready()
-✅ From main branch: is_risk_cooldown_active import and risk cooldown check in _run_trading_cycles()
-✅ Fixed trailing whitespace on raise
-database_pr20.py
-Combined both branches:
-
-✅ From codex branch: Order dataclass, upsert_orders(), update_order_status(), orders table creation
-✅ From main branch: close() method and if __name__ == "__main__": block
-To use these files: Simply rename them to replace the originals:
-
-beast_mode_bot_pr20.py → beast_mode_bot.py
-database_pr20.py → src/utils/database.py
-Do you have more PRs with conflicts to fix? If so, please share them and I'll resolve those too!
-
-Beast mode bot pr20
-PY 
-Database pr20
-PY 
-
-
-
-
-
-
-Claude is AI and can make mistakes. Please double-check responses.
-Database pr20 · PY
-Copy
-
 """
 Database manager for the Kalshi trading system.
 """
@@ -258,6 +26,7 @@ class Market:
     last_updated: datetime
     has_position: bool = False
 
+
 @dataclass
 class Position:
     """Represents a trading position."""
@@ -279,6 +48,7 @@ class Position:
     max_hold_hours: Optional[int] = None  # Maximum hours to hold position
     target_confidence_change: Optional[float] = None  # Exit if confidence drops by this amount
 
+
 @dataclass
 class Order:
     """Represents an order synced from Kalshi."""
@@ -298,6 +68,7 @@ class Order:
     expiration_ts: Optional[int] = None
     last_synced: Optional[datetime] = None
 
+
 @dataclass
 class TradeLog:
     """Represents a closed trade for logging and analysis."""
@@ -312,6 +83,7 @@ class TradeLog:
     rationale: str
     strategy: Optional[str] = None  # Strategy that created this trade
     id: Optional[int] = None
+
 
 @dataclass
 class LLMQuery:
@@ -769,13 +541,19 @@ class DatabaseManager(TradingLoggerMixin):
             await db.commit()
             self.logger.info(f"Updated order {order_id} status to {status}.")
 
-    async def get_eligible_markets(self, volume_min: int, max_days_to_expiry: int) -> List[Market]:
+    async def get_eligible_markets(
+        self,
+        volume_min: int,
+        max_days_to_expiry: int,
+        last_updated_max_age_seconds: int = 30,
+    ) -> List[Market]:
         """
         Get markets that are eligible for trading.
 
         Args:
             volume_min: Minimum trading volume.
             max_days_to_expiry: Maximum days to expiration.
+            last_updated_max_age_seconds: Maximum age of market data in seconds.
         
         Returns:
             A list of eligible markets.
@@ -783,7 +561,8 @@ class DatabaseManager(TradingLoggerMixin):
         now = datetime.now()
         now_ts = int(now.timestamp())
         max_expiry_ts = now_ts + (max_days_to_expiry * 24 * 60 * 60)
-        max_recency_seconds = 30
+        last_updated_cutoff = now - timedelta(seconds=last_updated_max_age_seconds)
+        last_updated_cutoff_iso = last_updated_cutoff.isoformat()
 
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
@@ -794,8 +573,9 @@ class DatabaseManager(TradingLoggerMixin):
                     expiration_ts > ? AND
                     expiration_ts <= ? AND
                     status = 'active' AND
-                    has_position = 0
-            """, (volume_min, now_ts, max_expiry_ts))
+                    has_position = 0 AND
+                    last_updated >= ?
+            """, (volume_min, now_ts, max_expiry_ts, last_updated_cutoff_iso))
             rows = await cursor.fetchall()
             
             markets = []
@@ -803,15 +583,6 @@ class DatabaseManager(TradingLoggerMixin):
                 market_dict = dict(row)
                 market_dict['last_updated'] = datetime.fromisoformat(market_dict['last_updated'])
                 market = Market(**market_dict)
-                age_seconds = (now - market.last_updated).total_seconds()
-                if age_seconds > max_recency_seconds:
-                    self.logger.warning(
-                        "Skipping stale market data",
-                        market_id=market.market_id,
-                        age_seconds=round(age_seconds, 2),
-                        last_updated=market.last_updated.isoformat(),
-                    )
-                    continue
                 markets.append(market)
             return markets
 
