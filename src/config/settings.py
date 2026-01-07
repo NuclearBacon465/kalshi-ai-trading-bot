@@ -46,6 +46,7 @@ class TradingConfig:
     fallback_model: str = "grok-3"  # Fallback to available model
     ai_temperature: float = 0  # Lower temperature for more consistent JSON output
     ai_max_tokens: int = 8000    # Reasonable limit for reasoning models (grok-4 works better with 8000)
+    ai_requests_per_minute: int = 60  # Per-minute request limit for AI calls
     
     # Position sizing (LEGACY - now using Kelly-primary approach)
     default_position_size: float = 3.0  # REDUCED: Now using Kelly Criterion as primary method (was 5%, now 3%)
