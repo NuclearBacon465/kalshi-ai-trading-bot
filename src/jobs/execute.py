@@ -6,7 +6,7 @@ This job takes a position and executes it as a trade.
 import asyncio
 import uuid
 from datetime import datetime
-from typing import Optional, Dict
+from typing import Optional, Dict, Iterable, Any, List
 
 from src.utils.database import DatabaseManager, Position
 from src.utils.logging_setup import get_trading_logger
@@ -231,6 +231,92 @@ async def execute_position(
         await db_manager.update_position_to_live(position.id, position.entry_price)
         logger.info(f"Successfully placed SIMULATED order for {position.market_id}")
         return True
+
+
+def _normalize_fill_price(price: Any) -> Optional[float]:
+    if price is None:
+        return None
+    try:
+        normalized = float(price)
+    except (TypeError, ValueError):
+        return None
+    if normalized > 1.0:
+        normalized /= 100
+    return normalized
+
+
+def _extract_fill_price(fill: Dict[str, Any], side: str) -> Optional[float]:
+    side_key = side.lower()
+    if "price" in fill:
+        return _normalize_fill_price(fill.get("price"))
+    if side_key == "yes" and "yes_price" in fill:
+        return _normalize_fill_price(fill.get("yes_price"))
+    if side_key == "no" and "no_price" in fill:
+        return _normalize_fill_price(fill.get("no_price"))
+    if "yes_price" in fill:
+        return _normalize_fill_price(fill.get("yes_price"))
+    if "no_price" in fill:
+        return _normalize_fill_price(fill.get("no_price"))
+    return None
+
+
+def _extract_fill_count(fill: Dict[str, Any]) -> Optional[int]:
+    for key in ("count", "quantity", "size", "filled_count"):
+        if key in fill and fill[key] is not None:
+            try:
+                return int(fill[key])
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def _calculate_average_fill_price(
+    fills: Iterable[Dict[str, Any]],
+    side: str,
+) -> Optional[float]:
+    total_notional = 0.0
+    total_count = 0
+
+    for fill in fills:
+        fill_price = _extract_fill_price(fill, side)
+        if fill_price is None:
+            continue
+        fill_count = _extract_fill_count(fill) or 1
+        total_notional += fill_price * fill_count
+        total_count += fill_count
+
+    if total_count == 0:
+        return None
+    return total_notional / total_count
+
+
+async def _fetch_average_fill_price(
+    kalshi_client: KalshiClient,
+    ticker: str,
+    client_order_id: str,
+    side: str,
+    max_attempts: int = 3,
+    base_delay: float = 0.5,
+) -> Optional[float]:
+    for attempt in range(max_attempts):
+        fills_response = await kalshi_client.get_fills(ticker=ticker)
+        raw_fills = fills_response.get("fills") or fills_response.get("data") or []
+        fills: List[Dict[str, Any]] = raw_fills if isinstance(raw_fills, list) else []
+
+        matching_fills = [
+            fill for fill in fills
+            if fill.get("client_order_id") == client_order_id
+            or fill.get("clientOrderId") == client_order_id
+        ]
+
+        average_price = _calculate_average_fill_price(matching_fills, side)
+        if average_price is not None:
+            return average_price
+
+        if attempt < max_attempts - 1:
+            await asyncio.sleep(base_delay * (2 ** attempt))
+
+    return None
 
 
 async def place_sell_limit_order(
