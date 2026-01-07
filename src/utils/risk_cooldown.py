@@ -1,69 +1,77 @@
-"""
-Utility helpers for persisting and checking risk cooldown state.
-"""
-
-from __future__ import annotations
+"""Utilities for persisting risk cooldown state."""
 
 import json
+import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
-class RiskCooldownStatus:
-    active: bool
-    cooldown_until: Optional[datetime]
-    remaining_seconds: float
-    reason: Optional[str] = None
+class RiskCooldownState:
+    cooldown_until: datetime
+    violations: List[str]
 
 
-def _cooldown_path(db_path: str) -> Path:
+def _state_path(db_path: str) -> Path:
     db_file = Path(db_path)
-    return db_file.with_name(f"{db_file.stem}.risk_cooldown.json")
+    if db_file.suffix:
+        return db_file.with_suffix(f"{db_file.suffix}.risk_cooldown.json")
+    return db_file.with_name(f"{db_file.name}.risk_cooldown.json")
 
 
-def set_risk_cooldown(db_path: str, duration: timedelta, reason: str) -> datetime:
-    cooldown_until = datetime.now() + duration
-    payload = {
+def save_risk_cooldown_state(
+    db_path: str,
+    cooldown_until: datetime,
+    violations: List[str],
+) -> Path:
+    state = {
         "cooldown_until": cooldown_until.isoformat(),
-        "reason": reason,
-        "duration_seconds": int(duration.total_seconds()),
+        "violations": violations,
         "updated_at": datetime.now().isoformat(),
     }
-    path = _cooldown_path(db_path)
-    path.write_text(json.dumps(payload, indent=2))
-    return cooldown_until
-
-
-def get_risk_cooldown_status(db_path: str) -> RiskCooldownStatus:
-    path = _cooldown_path(db_path)
-    if not path.exists():
-        return RiskCooldownStatus(active=False, cooldown_until=None, remaining_seconds=0.0)
-
+    path = _state_path(db_path)
     try:
-        payload = json.loads(path.read_text())
-        cooldown_until_raw = payload.get("cooldown_until")
-        reason = payload.get("reason")
-        if not cooldown_until_raw:
-            return RiskCooldownStatus(active=False, cooldown_until=None, remaining_seconds=0.0)
-        cooldown_until = datetime.fromisoformat(cooldown_until_raw)
-    except Exception:
-        return RiskCooldownStatus(active=False, cooldown_until=None, remaining_seconds=0.0)
+        path.write_text(json.dumps(state, indent=2))
+    except Exception as exc:
+        logger.error("Failed to write risk cooldown state: %s", exc)
+    return path
 
-    now = datetime.now()
-    remaining = (cooldown_until - now).total_seconds()
-    if remaining <= 0:
+
+def load_risk_cooldown_state(db_path: str) -> Optional[RiskCooldownState]:
+    path = _state_path(db_path)
+    if not path.exists():
+        return None
+    try:
+        raw = json.loads(path.read_text())
+        cooldown_until = datetime.fromisoformat(raw["cooldown_until"])
+        violations = list(raw.get("violations", []))
+        return RiskCooldownState(cooldown_until=cooldown_until, violations=violations)
+    except Exception as exc:
+        logger.error("Failed to read risk cooldown state: %s", exc)
+        return None
+
+
+def clear_risk_cooldown_state(db_path: str) -> None:
+    path = _state_path(db_path)
+    if path.exists():
         try:
-            path.unlink(missing_ok=True)
-        except Exception:
-            pass
-        return RiskCooldownStatus(active=False, cooldown_until=None, remaining_seconds=0.0)
+            path.unlink()
+        except Exception as exc:
+            logger.error("Failed to clear risk cooldown state: %s", exc)
 
-    return RiskCooldownStatus(
-        active=True,
-        cooldown_until=cooldown_until,
-        remaining_seconds=remaining,
-        reason=reason,
-    )
+
+def is_risk_cooldown_active(
+    db_path: str, now: Optional[datetime] = None
+) -> Tuple[bool, Optional[RiskCooldownState]]:
+    state = load_risk_cooldown_state(db_path)
+    if not state:
+        return False, None
+    now = now or datetime.now()
+    if now < state.cooldown_until:
+        return True, state
+    clear_risk_cooldown_state(db_path)
+    return False, None
