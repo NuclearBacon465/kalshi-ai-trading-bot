@@ -2,6 +2,8 @@
 Trade Execution Job
 
 This job takes a position and executes it as a trade.
+
+🚀 PHASE 4: Now uses institutional-grade enhanced execution when available!
 """
 import asyncio
 import uuid
@@ -15,22 +17,35 @@ from src.clients.kalshi_client import KalshiClient, KalshiAPIError
 from src.utils.health import is_safe_mode_active
 from src.utils.notifications import get_notifier
 
+# 🚀 PHASE 4: Import enhanced execution
+try:
+    from src.jobs.enhanced_execute import execute_position_enhanced, close_position_enhanced
+    ENHANCED_EXECUTION_AVAILABLE = True
+except ImportError:
+    ENHANCED_EXECUTION_AVAILABLE = False
+
 
 async def execute_position(
-    position: Position, 
-    live_mode: bool, 
-    db_manager: DatabaseManager, 
-    kalshi_client: KalshiClient
+    position: Position,
+    live_mode: bool,
+    db_manager: DatabaseManager,
+    kalshi_client: KalshiClient,
+    total_capital: float = 100.0,
+    urgency: str = "normal"
 ) -> bool:
     """
     Executes a single trade position.
-    
+
+    🚀 PHASE 4: Now uses enhanced execution with institutional-grade features when available!
+
     Args:
         position: The position to execute.
         live_mode: Whether to execute a live or simulated trade.
         db_manager: The database manager instance.
         kalshi_client: The Kalshi client instance.
-        
+        total_capital: Total portfolio capital (for Phase 4 execution)
+        urgency: Execution urgency level: "low", "normal", "high", "urgent"
+
     Returns:
         True if execution was successful, False otherwise.
     """
@@ -38,6 +53,24 @@ async def execute_position(
     notifier = get_notifier()
 
     logger.info(f"Executing position for market: {position.market_id}")
+
+    # 🚀 PHASE 4: Try enhanced execution first!
+    if ENHANCED_EXECUTION_AVAILABLE:
+        try:
+            logger.info("🚀 Using Phase 4 institutional-grade execution")
+            return await execute_position_enhanced(
+                position=position,
+                live_mode=live_mode,
+                db_manager=db_manager,
+                kalshi_client=kalshi_client,
+                total_capital=total_capital,
+                urgency=urgency
+            )
+        except Exception as e:
+            logger.warning(f"⚠️ Phase 4 execution failed, falling back to standard: {e}")
+            # Continue to standard execution below
+
+    # Standard execution (fallback or when Phase 4 not available)
     live_mode = enforce_kill_switch(live_mode, logger)
 
     # Check safe mode from database manager
@@ -613,21 +646,43 @@ async def execute_close_position(
     position: Position,
     db_manager: DatabaseManager,
     kalshi_client: KalshiClient,
-    reason: str = "manual_close"
+    reason: str = "manual_close",
+    total_capital: float = 100.0,
+    urgency: str = "normal"
 ) -> bool:
     """
     Close an existing position (used for rebalancing, profit-taking, stop-loss).
+
+    🚀 PHASE 4: Now uses enhanced closing with institutional-grade features!
 
     Args:
         position: Position to close
         db_manager: Database manager
         kalshi_client: Kalshi client
         reason: Reason for closing (for logging)
+        total_capital: Total portfolio capital (for Phase 4 execution)
+        urgency: Execution urgency level
 
     Returns:
         True if successfully closed, False otherwise
     """
     logger = get_trading_logger("position_closer")
+
+    # 🚀 PHASE 4: Try enhanced close first!
+    if ENHANCED_EXECUTION_AVAILABLE:
+        try:
+            logger.info("🚀 Using Phase 4 institutional-grade close")
+            return await close_position_enhanced(
+                position=position,
+                db_manager=db_manager,
+                kalshi_client=kalshi_client,
+                reason=reason,
+                total_capital=total_capital,
+                urgency=urgency
+            )
+        except Exception as e:
+            logger.warning(f"⚠️ Phase 4 close failed, falling back to standard: {e}")
+            # Continue to standard close below
 
     try:
         import uuid
