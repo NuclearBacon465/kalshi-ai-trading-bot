@@ -54,14 +54,25 @@ async def test_kalshi_api():
     try:
         from src.clients.kalshi_client import KalshiClient
         from src.config.settings import settings
-        
-        has_creds = bool(settings.kalshi_email and settings.kalshi_password)
-        if not has_creds:
-            print_warning("Kalshi credentials", "Not in .env (expected in test env)")
+        from pathlib import Path
+
+        # Check for API key (not email/password)
+        has_api_key = bool(settings.api.kalshi_api_key)
+        if not has_api_key:
+            print_warning("Kalshi API key", "Not in .env")
             return False
-        
-        print_test("Credentials configured", True, "Found")
-        
+
+        print_test("API key configured", True, f"{settings.api.kalshi_api_key[:10]}...")
+
+        # Check for private key file
+        private_key_file = Path("kalshi_private_key")
+        has_private_key = private_key_file.exists()
+        print_test("Private key file", has_private_key, "kalshi_private_key")
+
+        if not has_private_key:
+            print_warning("Private key", "PEM file not found")
+            return False
+
         client = KalshiClient()
         print_test("Client initialization", True, "Created")
         
@@ -92,18 +103,18 @@ async def test_xai_api():
     try:
         from src.config.settings import settings
         import httpx
-        
-        has_key = bool(settings.xai_api_key)
+
+        has_key = bool(settings.api.xai_api_key)
         if not has_key:
             print_warning("xAI API key", "Not in .env - AI disabled")
             return False
-        
-        print_test("API key configured", True, f"{settings.xai_api_key[:10]}...")
-        
+
+        print_test("API key configured", True, f"{settings.api.xai_api_key[:10]}...")
+
         async with httpx.AsyncClient() as client:
             response = await client.get(
                 "https://api.x.ai/v1/models",
-                headers={"Authorization": f"Bearer {settings.xai_api_key}"},
+                headers={"Authorization": f"Bearer {settings.api.xai_api_key}"},
                 timeout=10.0
             )
             
