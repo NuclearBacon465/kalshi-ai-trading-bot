@@ -133,6 +133,29 @@ class BeastModeBot:
                 self.logger.warning(f"WebSocket manager not available: {e}")
                 ws_manager = None
 
+            # 🚀 PHASE 4: Initialize institutional-grade features
+            self.logger.info("🚀 Initializing Phase 4 institutional-grade features...")
+
+            # Initialize smart execution engine
+            try:
+                from src.utils.smart_execution import SmartOrderExecutor
+                smart_executor = SmartOrderExecutor(kalshi_client, db_manager)
+                self.logger.info("✅ Smart execution engine initialized (order book analysis + adversarial detection)")
+            except Exception as e:
+                self.logger.warning(f"Smart executor not available: {e}")
+                smart_executor = None
+
+            # Initialize inventory manager
+            try:
+                from src.utils.inventory_management import get_inventory_manager
+                inventory_manager = await get_inventory_manager(db_manager)
+                self.logger.info("✅ Inventory risk management initialized")
+            except Exception as e:
+                self.logger.warning(f"Inventory manager not available: {e}")
+                inventory_manager = None
+
+            self.logger.info("🎯 Phase 4 features ready - institutional-grade execution enabled!")
+
             # Sync startup state (orders + positions) and cancel stale orders
             await self._sync_startup_state(db_manager, kalshi_client)
             
@@ -688,7 +711,13 @@ Beast Mode Features:
         action="store_true",
         help="Override live trading safety check (use with caution)"
     )
-    
+    parser.add_argument(
+        "--scan-interval",
+        type=int,
+        default=60,
+        help="Trading cycle scan interval in seconds (default: 60)"
+    )
+
     args = parser.parse_args()
     
     # Setup logging
@@ -739,7 +768,7 @@ Beast Mode Features:
     bot = BeastModeBot(
         live_mode=args.live,
         dashboard_mode=args.dashboard,
-        scan_interval_seconds=args.scan_interval_seconds
+        scan_interval_seconds=args.scan_interval
     )
     await bot.run()
 

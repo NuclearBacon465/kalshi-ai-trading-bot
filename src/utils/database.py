@@ -7,7 +7,7 @@ import json
 from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Any
 
 from src.config.settings import settings
 from src.utils.logging_setup import TradingLoggerMixin
