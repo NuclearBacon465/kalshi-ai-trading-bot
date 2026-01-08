@@ -70,20 +70,24 @@ class KalshiWebSocketClient:
         Connect to Kalshi WebSocket with authentication.
         """
         try:
+            # Ensure private key is loaded before signing
+            self.kalshi_client._load_private_key()
+
             # Get authentication headers
             timestamp = str(int(time.time() * 1000))
             signature = self.kalshi_client._sign_request(timestamp, "GET", "/trade-api/ws/v2")
 
-            headers = {
-                "KALSHI-ACCESS-KEY": self.kalshi_client.api_key,
-                "KALSHI-ACCESS-SIGNATURE": signature,
-                "KALSHI-ACCESS-TIMESTAMP": timestamp
-            }
+            # Build headers for websockets 15.x (use additional_headers as list of tuples)
+            headers = [
+                ("KALSHI-ACCESS-KEY", self.kalshi_client.api_key),
+                ("KALSHI-ACCESS-SIGNATURE", signature),
+                ("KALSHI-ACCESS-TIMESTAMP", timestamp)
+            ]
 
             self.logger.info("Connecting to Kalshi WebSocket...")
             self.websocket = await websockets.connect(
                 self.ws_url,
-                extra_headers=headers,
+                additional_headers=headers,
                 ping_interval=self.heartbeat_interval,
                 ping_timeout=10
             )
