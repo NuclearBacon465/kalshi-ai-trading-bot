@@ -77,14 +77,15 @@ class KalshiWebSocketClient:
             timestamp = str(int(time.time() * 1000))
             signature = self.kalshi_client._sign_request(timestamp, "GET", "/trade-api/ws/v2")
 
-            # Build headers for websockets 15.x (use additional_headers as list of tuples)
-            headers = [
-                ("KALSHI-ACCESS-KEY", self.kalshi_client.api_key),
-                ("KALSHI-ACCESS-SIGNATURE", signature),
-                ("KALSHI-ACCESS-TIMESTAMP", timestamp)
-            ]
+            # Build headers using dictionary format (per Kalshi official documentation)
+            headers = {
+                "KALSHI-ACCESS-KEY": self.kalshi_client.api_key,
+                "KALSHI-ACCESS-SIGNATURE": signature,
+                "KALSHI-ACCESS-TIMESTAMP": timestamp
+            }
 
             self.logger.info("Connecting to Kalshi WebSocket...")
+            self.logger.debug(f"WebSocket auth - Timestamp: {timestamp}, API Key: {self.kalshi_client.api_key[:10]}..., Signature length: {len(signature)}")
             self.websocket = await websockets.connect(
                 self.ws_url,
                 additional_headers=headers,
