@@ -7,7 +7,7 @@
 
 ## ✅ WHAT WE'VE VERIFIED
 
-### 1. Our Implementation Matches Kalshi Official Docs EXACTLY
+### 1. Our Implementation Matches Kalshi Official Docs
 
 From: https://docs.kalshi.com/getting_started/quick_start_websockets
 
@@ -15,7 +15,7 @@ From: https://docs.kalshi.com/getting_started/quick_start_websockets
 |-----------|---------------------|-------------------|--------|
 | **URL** | `wss://api.elections.kalshi.com/trade-api/ws/v2` | `wss://api.elections.kalshi.com/trade-api/ws/v2` | ✅ MATCH |
 | **Headers** | KALSHI-ACCESS-KEY, KALSHI-ACCESS-SIGNATURE, KALSHI-ACCESS-TIMESTAMP | Same 3 headers | ✅ MATCH |
-| **Signing Message** | `timestamp + "GET" + "/trade-api/ws/v2"` | `timestamp + "GET" + "/trade-api/ws/v2"` | ✅ MATCH |
+| **Signing Message** | `timestamp + "GET" + "/trade-api/ws/v2"` | Uses WebSocket path from URL | ✅ MATCH |
 | **Signature Method** | RSA-PSS, SHA256, DIGEST_LENGTH salt | RSA-PSS, SHA256, DIGEST_LENGTH salt | ✅ MATCH |
 | **Timestamp Format** | Unix milliseconds | Unix milliseconds | ✅ MATCH |
 | **Encoding** | Base64 | Base64 | ✅ MATCH |
@@ -135,15 +135,19 @@ self.kalshi_client._load_private_key()
 timestamp = str(int(time.time() * 1000))
 
 # Signs with correct format ✅
+parsed_path = urlparse(self.ws_url).path or "/"
+ws_path = parsed_path if parsed_path != "/" else settings.api.kalshi_ws_signing_path
 signature = self.kalshi_client._sign_request(
-    timestamp, "GET", "/trade-api/ws/v2"
+    timestamp, "GET", ws_path
 )
 
 # Uses dictionary headers (per official docs) ✅
 headers = {
     "KALSHI-ACCESS-KEY": self.kalshi_client.api_key,
     "KALSHI-ACCESS-SIGNATURE": signature,
-    "KALSHI-ACCESS-TIMESTAMP": timestamp
+    "KALSHI-ACCESS-TIMESTAMP": timestamp,
+    "Content-Type": "application/json",
+    "X-API-KEY": self.kalshi_client.api_key
 }
 
 # Connects with correct parameters ✅
