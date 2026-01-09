@@ -254,12 +254,40 @@ class KalshiClient(TradingLoggerMixin):
         return await self._make_authenticated_request("GET", "/trade-api/v2/portfolio/positions", params=params)
     
     async def get_fills(self, ticker: Optional[str] = None, limit: int = 100) -> Dict[str, Any]:
-        """Get order fills.""" 
+        """Get order fills."""
         params = {"limit": limit}
         if ticker:
             params["ticker"] = ticker
         return await self._make_authenticated_request("GET", "/trade-api/v2/portfolio/fills", params=params)
-    
+
+    async def get_settlements(
+        self,
+        limit: int = 100,
+        cursor: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Get settled positions.
+
+        IMPORTANT: As of Dec 11, 2025, get_positions() only returns UNSETTLED positions.
+        Use this endpoint to get settled positions.
+
+        Args:
+            limit: Number of settlements to return
+            cursor: Pagination cursor
+
+        Returns:
+            Settlements data with event_ticker, fees_paid, etc.
+        """
+        params = {"limit": limit}
+        if cursor:
+            params["cursor"] = cursor
+
+        return await self._make_authenticated_request(
+            "GET",
+            "/trade-api/v2/portfolio/settlements",
+            params=params
+        )
+
     async def get_orders(self, ticker: Optional[str] = None, status: Optional[str] = None) -> Dict[str, Any]:
         """Get orders."""
         params = {}
@@ -314,7 +342,80 @@ class KalshiClient(TradingLoggerMixin):
         return await self._make_authenticated_request(
             "GET", f"/trade-api/v2/markets/{ticker}", require_auth=False
         )
-    
+
+    async def get_events(
+        self,
+        series_ticker: Optional[str] = None,
+        status: Optional[str] = None,
+        limit: int = 200,
+        cursor: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Get events.
+
+        IMPORTANT: As of Nov 6, 2025, this endpoint EXCLUDES multivariate events.
+        Use get_multivariate_events() for combo markets.
+
+        Args:
+            series_ticker: Filter by series
+            status: Filter by status
+            limit: Number of events to return (default 200, was 100)
+            cursor: Pagination cursor
+
+        Returns:
+            Events data
+        """
+        params = {"limit": limit}
+        if series_ticker:
+            params["series_ticker"] = series_ticker
+        if status:
+            params["status"] = status
+        if cursor:
+            params["cursor"] = cursor
+
+        return await self._make_authenticated_request(
+            "GET",
+            "/trade-api/v2/events",
+            params=params,
+            require_auth=False
+        )
+
+    async def get_multivariate_events(
+        self,
+        series_ticker: Optional[str] = None,
+        collection_ticker: Optional[str] = None,
+        limit: int = 200,
+        cursor: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Get multivariate events (combo markets).
+
+        Added Nov 6, 2025. These are excluded from get_events().
+
+        Args:
+            series_ticker: Filter by series
+            collection_ticker: Filter by collection
+            limit: Number of events to return
+            cursor: Pagination cursor
+
+        Returns:
+            Multivariate events data
+        """
+        params = {"limit": limit}
+        if series_ticker:
+            params["series_ticker"] = series_ticker
+        if collection_ticker:
+            params["collection_ticker"] = collection_ticker
+        if cursor:
+            params["cursor"] = cursor
+
+        return await self._make_authenticated_request(
+            "GET",
+            "/trade-api/v2/events/multivariate",
+            params=params,
+            require_auth=False
+        )
+
     async def get_orderbook(self, ticker: str, depth: int = 100) -> Dict[str, Any]:
         """
         Get market orderbook.
