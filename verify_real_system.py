@@ -74,8 +74,16 @@ async def verify_everything():
     # 4. TEST XAI/GROK API
     print("\n4. TESTING XAI/GROK API (REAL CONNECTION)...")
     import httpx
+    import ssl
     try:
-        async with httpx.AsyncClient(timeout=15.0) as http_client:
+        # Create SSL context that handles certificate verification properly
+        ssl_context = ssl.create_default_context()
+
+        async with httpx.AsyncClient(
+            timeout=15.0,
+            verify=ssl_context,
+            http2=False  # Disable HTTP/2 to avoid TLS issues
+        ) as http_client:
             response = await http_client.get(
                 "https://api.x.ai/v1/models",
                 headers={"Authorization": f"Bearer {settings.api.xai_api_key}"}
@@ -91,11 +99,14 @@ async def verify_everything():
                     print(f"   ✅ Grok models: {', '.join(grok_models[:3])}")
             else:
                 print(f"   ❌ xAI API returned status {response.status_code}")
-                print(f"   Response: {response.text}")
+                print(f"   Response: {response.text[:200]}")
 
+    except httpx.ConnectError as e:
+        print(f"   ⚠️ xAI API connection failed: {e}")
+        print(f"   (Server may be temporarily unavailable)")
     except Exception as e:
         print(f"   ⚠️ xAI API test failed: {e}")
-        print(f"   (This might be temporary - server overload)")
+        print(f"   (This might be temporary - server issue)")
 
     # 5. TEST WEBSOCKET CONNECTION
     print("\n5. TESTING WEBSOCKET (REAL CONNECTION)...")
