@@ -40,20 +40,25 @@ class KalshiClient(TradingLoggerMixin):
     _min_request_interval = 0.35
 
     def __init__(
-        self, 
-        api_key: Optional[str] = None, 
+        self,
+        api_key: Optional[str] = None,
         private_key_path: str = "kalshi_private_key",
         max_retries: int = 5,
         backoff_factor: float = 0.5
     ):
         """
         Initialize Kalshi client.
-        
+
         Args:
             api_key: Kalshi API key (Key ID from the API key generation)
-            private_key_path: Path to private key file
+            private_key_path: Path to private key file (SECURITY: Store securely, never expose)
             max_retries: Maximum number of retries for failed requests
             backoff_factor: Factor for exponential backoff
+
+        Note:
+            Per Kalshi Quick Start docs: Despite the 'elections' subdomain,
+            api.elections.kalshi.com provides access to ALL Kalshi markets
+            (economics, climate, technology, entertainment, etc.)
         """
         self.api_key = api_key or settings.api.kalshi_api_key
         self.base_url = settings.api.kalshi_base_url
@@ -61,7 +66,7 @@ class KalshiClient(TradingLoggerMixin):
         self.private_key = None
         self.max_retries = max_retries
         self.backoff_factor = backoff_factor
-        
+
         # Load private key lazily on first authenticated request
         
         # HTTP client with timeouts
@@ -109,17 +114,22 @@ class KalshiClient(TradingLoggerMixin):
     def _sign_request(self, timestamp: str, method: str, path: str) -> str:
         """
         Sign request using RSA PSS signing method as per Kalshi API docs.
-        
+
         Args:
             timestamp: Request timestamp in milliseconds
             method: HTTP method
-            path: Request path
-        
+            path: Request path (query parameters will be stripped automatically)
+
         Returns:
             Base64 encoded signature
         """
+        # CRITICAL: Strip query parameters before signing (per Kalshi Quick Start docs)
+        # "Important: Use the path without query parameters. For /portfolio/orders?limit=5,
+        # sign only /trade-api/v2/portfolio/orders"
+        path_without_query = path.split('?')[0]
+
         # Create message to sign: timestamp + method + path
-        message = timestamp + method.upper() + path
+        message = timestamp + method.upper() + path_without_query
         message_bytes = message.encode('utf-8')
         
         try:
@@ -212,7 +222,9 @@ class KalshiClient(TradingLoggerMixin):
                     headers=headers,
                     content=body if body else None
                 )
-                
+
+                # Per Kalshi Quick Start: raise_for_status() handles all 2xx codes including
+                # 201 (order creation success) and 200 (general success)
                 response.raise_for_status()
                 return response.json()
                 
@@ -475,20 +487,22 @@ class KalshiClient(TradingLoggerMixin):
     ) -> Dict[str, Any]:
         """
         Place a trading order.
-        
+
         Args:
             ticker: Market ticker
-            client_order_id: Unique client order ID
+            client_order_id: Unique client order ID (CRITICAL for deduplication -
+                           per Kalshi Quick Start: prevents accidental double orders
+                           on network issues. Use UUID4 for uniqueness)
             side: "yes" or "no"
             action: "buy" or "sell"
             count: Number of contracts
             type_: Order type ("market" or "limit")
-            yes_price: Yes price in cents (for limit orders)
-            no_price: No price in cents (for limit orders)
+            yes_price: Yes price in cents (1-99, per Kalshi Quick Start)
+            no_price: No price in cents (1-99, per Kalshi Quick Start)
             expiration_ts: Order expiration timestamp
-        
+
         Returns:
-            Order response
+            Order response (HTTP 201 on success per Kalshi Quick Start)
         """
         order_data = {
             "ticker": ticker,

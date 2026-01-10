@@ -70,6 +70,9 @@ class KalshiWebSocketClient:
         # Message queue for processing
         self.message_queue = asyncio.Queue()
 
+        # Message ID tracking for WebSocket commands (per Quick Start docs)
+        self._message_id = 1
+
     async def connect(self):
         """
         Connect to Kalshi WebSocket with authentication.
@@ -135,14 +138,16 @@ class KalshiWebSocketClient:
             return False
 
         try:
-            # FIXED: Per official docs, use "cmd" and "market_tickers"
+            # Per Kalshi Quick Start docs: include "id" field for message tracking
             message = {
+                "id": self._message_id,
                 "cmd": "subscribe",
                 "params": {
                     "channels": ["ticker"],
                     "market_tickers": [ticker]
                 }
             }
+            self._message_id += 1
 
             await self.websocket.send(json.dumps(message))
             self.subscribed_tickers.add(ticker)
@@ -162,13 +167,15 @@ class KalshiWebSocketClient:
             return False
 
         try:
-            # FIXED: Per official docs, use "cmd" and "channels" array
+            # Per Kalshi Quick Start docs: include "id" field for message tracking
             message = {
+                "id": self._message_id,
                 "cmd": "subscribe",
                 "params": {
                     "channels": ["fill"]
                 }
             }
+            self._message_id += 1
 
             await self.websocket.send(json.dumps(message))
             self.logger.info("🔔 Subscribed to fill notifications")
@@ -187,14 +194,16 @@ class KalshiWebSocketClient:
             return False
 
         try:
-            # FIXED: Per official docs, use "cmd" and "market_tickers" (array)
+            # Per Kalshi Quick Start docs: include "id" field for message tracking
             message = {
+                "id": self._message_id,
                 "cmd": "subscribe",
                 "params": {
                     "channels": ["orderbook_delta"],
                     "market_tickers": [ticker]
                 }
             }
+            self._message_id += 1
 
             await self.websocket.send(json.dumps(message))
             self.logger.info(f"📖 Subscribed to orderbook: {ticker}")
@@ -217,11 +226,14 @@ class KalshiWebSocketClient:
 
         try:
             message = {
+                "id": self._message_id,
                 "cmd": "subscribe",
                 "params": {
                     "channels": ["market_positions"]
                 }
             }
+            self._message_id += 1
+
             if tickers:
                 message["params"]["market_tickers"] = tickers
 
@@ -246,11 +258,14 @@ class KalshiWebSocketClient:
 
         try:
             message = {
+                "id": self._message_id,
                 "cmd": "subscribe",
                 "params": {
                     "channels": ["market_lifecycle_v2"]
                 }
             }
+            self._message_id += 1
+
             if tickers:
                 message["params"]["market_tickers"] = tickers
 
@@ -272,11 +287,13 @@ class KalshiWebSocketClient:
 
         try:
             message = {
+                "id": self._message_id,
                 "cmd": "subscribe",
                 "params": {
                     "channels": ["communications"]
                 }
             }
+            self._message_id += 1
 
             await self.websocket.send(json.dumps(message))
             self.logger.info("💬 Subscribed to communications (RFQ/quotes)")
@@ -298,11 +315,14 @@ class KalshiWebSocketClient:
 
         try:
             message = {
+                "id": self._message_id,
                 "cmd": "subscribe",
                 "params": {
                     "channels": ["trade"]
                 }
             }
+            self._message_id += 1
+
             if tickers:
                 message["params"]["market_tickers"] = tickers
 
@@ -324,7 +344,12 @@ class KalshiWebSocketClient:
             return False
 
         try:
-            message = {"cmd": "list_subscriptions"}
+            message = {
+                "id": self._message_id,
+                "cmd": "list_subscriptions"
+            }
+            self._message_id += 1
+
             await self.websocket.send(json.dumps(message))
             self.logger.info("📋 Requested subscription list")
             return True
@@ -347,11 +372,14 @@ class KalshiWebSocketClient:
 
         try:
             message = {
+                "id": self._message_id,
                 "cmd": "unsubscribe",
                 "params": {
                     "channels": channels
                 }
             }
+            self._message_id += 1
+
             if tickers:
                 message["params"]["market_tickers"] = tickers
 
@@ -394,7 +422,16 @@ class KalshiWebSocketClient:
             channel = message.get('channel')
 
             if msg_type == 'error':
-                self.logger.error(f"WebSocket error: {message.get('message')}")
+                # Per Kalshi Quick Start docs, error format is:
+                # {"id": 123, "type": "error", "msg": {"code": 6, "msg": "Params required"}}
+                msg_id = message.get('id', 'unknown')
+                error_data = message.get('msg', {})
+                error_code = error_data.get('code', 'unknown')
+                error_msg = error_data.get('msg', str(message))
+                self.logger.error(
+                    f"WebSocket error [ID:{msg_id}] Code {error_code}: {error_msg}",
+                    extra={"ws_error_code": error_code, "ws_message_id": msg_id}
+                )
                 return
 
             if msg_type == 'subscribed':
