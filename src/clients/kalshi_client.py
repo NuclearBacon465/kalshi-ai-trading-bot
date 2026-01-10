@@ -1097,6 +1097,139 @@ class KalshiClient(TradingLoggerMixin):
         )
 
     # ============================================================================
+    # ORDER GROUPS (Risk Management - API Part 3)
+    # ============================================================================
+
+    async def get_order_groups(self) -> Dict[str, Any]:
+        """
+        Get all order groups for the authenticated user.
+
+        Per Kalshi API: Order groups allow setting a contracts_limit. When the
+        limit is hit, all orders in the group are auto-canceled and no new orders
+        can be placed until reset.
+
+        Returns:
+            Dict with order_groups array containing:
+            - id: Order group ID
+            - is_auto_cancel_enabled: Whether auto-cancel is active
+
+        Example:
+            groups = await client.get_order_groups()
+            for group in groups['order_groups']:
+                print(f"Group {group['id']}: auto-cancel={group['is_auto_cancel_enabled']}")
+        """
+        return await self._make_authenticated_request(
+            "GET",
+            "/trade-api/v2/portfolio/order_groups"
+        )
+
+    async def create_order_group(self, contracts_limit: int) -> Dict[str, Any]:
+        """
+        Create a new order group with a contracts limit.
+
+        Per Kalshi API: When the limit is hit, all orders in the group are
+        cancelled and no new orders can be placed until reset.
+
+        Useful for risk management - limit total position exposure across
+        multiple markets.
+
+        Args:
+            contracts_limit: Maximum contracts that can be matched (>= 1)
+
+        Returns:
+            Dict with order_group_id
+
+        Example:
+            # Create group with max 100 contracts
+            result = await client.create_order_group(contracts_limit=100)
+            group_id = result['order_group_id']
+
+            # Use in orders
+            await client.place_order(
+                ...,
+                order_group_id=group_id
+            )
+        """
+        if contracts_limit < 1:
+            raise ValueError("contracts_limit must be >= 1")
+
+        return await self._make_authenticated_request(
+            "POST",
+            "/trade-api/v2/portfolio/order_groups/create",
+            json_data={"contracts_limit": contracts_limit}
+        )
+
+    async def get_order_group(self, order_group_id: str) -> Dict[str, Any]:
+        """
+        Get details for a single order group.
+
+        Per Kalshi API: Retrieves all order IDs and auto-cancel status.
+
+        Args:
+            order_group_id: Order group ID
+
+        Returns:
+            Dict with:
+            - is_auto_cancel_enabled: Whether auto-cancel is active
+            - orders: List of order IDs in this group
+
+        Example:
+            group = await client.get_order_group("group-123")
+            print(f"Auto-cancel: {group['is_auto_cancel_enabled']}")
+            print(f"Orders: {group['orders']}")
+        """
+        return await self._make_authenticated_request(
+            "GET",
+            f"/trade-api/v2/portfolio/order_groups/{order_group_id}"
+        )
+
+    async def delete_order_group(self, order_group_id: str) -> Dict[str, Any]:
+        """
+        Delete an order group and cancel all orders within it.
+
+        Per Kalshi API: This permanently removes the group.
+
+        Args:
+            order_group_id: Order group ID to delete
+
+        Returns:
+            Empty dict on success
+
+        Example:
+            await client.delete_order_group("group-123")
+        """
+        return await self._make_authenticated_request(
+            "DELETE",
+            f"/trade-api/v2/portfolio/order_groups/{order_group_id}"
+        )
+
+    async def reset_order_group(self, order_group_id: str) -> Dict[str, Any]:
+        """
+        Reset the order group's matched contracts counter to zero.
+
+        Per Kalshi API: Allows new orders to be placed again after the limit
+        was hit.
+
+        Useful for daily/periodic risk limit resets.
+
+        Args:
+            order_group_id: Order group ID to reset
+
+        Returns:
+            Empty dict on success
+
+        Example:
+            # Reset daily at market open
+            await client.reset_order_group("group-123")
+            # Can now place new orders up to contracts_limit again
+        """
+        return await self._make_authenticated_request(
+            "PUT",
+            f"/trade-api/v2/portfolio/order_groups/{order_group_id}/reset",
+            json_data={}
+        )
+
+    # ============================================================================
     # SERIES OPERATIONS (Added per Kalshi API docs)
     # ============================================================================
 
