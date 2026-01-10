@@ -32,12 +32,23 @@ class KalshiClient(TradingLoggerMixin):
     """
     Kalshi API client for automated trading.
     Handles authentication, market data retrieval, and trade execution.
+
+    Rate Limits (per Kalshi Reference docs):
+    - Basic tier: 20 read/sec, 10 write/sec (default on signup)
+    - Advanced tier: 30 read/sec, 30 write/sec (via typeform)
+    - Premier tier: 100 read/sec, 100 write/sec (3.75% volume + technical review)
+    - Prime tier: 400 read/sec, 400 write/sec (7.5% volume + technical review)
+
+    Write-limited endpoints:
+    - CreateOrder, CancelOrder, AmendOrder, DecreaseOrder
+    - BatchCreateOrders (each order = 1 transaction)
+    - BatchCancelOrders (each cancel = 0.2 transactions)
     """
-    
+
     _rate_semaphore = asyncio.Semaphore(5)
     _rate_lock = asyncio.Lock()
     _last_request_ts = 0.0
-    _min_request_interval = 0.35
+    _min_request_interval = 0.35  # ~2.86 req/sec (conservative for Basic tier)
 
     def __init__(
         self,
@@ -1108,6 +1119,148 @@ class KalshiClient(TradingLoggerMixin):
             "/trade-api/v2/exchange/schedule",
             require_auth=False
         )
+
+    # ========================================================================
+    # Pagination Helpers (per Kalshi Reference: Understanding Pagination)
+    # ========================================================================
+
+    async def get_all_markets(
+        self,
+        event_ticker: Optional[str] = None,
+        series_ticker: Optional[str] = None,
+        status: Optional[str] = None,
+        max_items: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Auto-paginate through all markets.
+
+        Per Kalshi Reference docs: "cursor-based pagination to efficiently navigate
+        through large datasets."
+
+        Args:
+            event_ticker: Filter by event ticker
+            series_ticker: Filter by series ticker
+            status: Filter by market status
+            max_items: Maximum total items to fetch (None = unlimited)
+
+        Returns:
+            List of all markets
+
+        Example:
+            # Get all open markets for a series
+            markets = await client.get_all_markets(
+                series_ticker="KXHIGHNY",
+                status="open"
+            )
+        """
+        all_markets = []
+        cursor = None
+        page_count = 0
+
+        while True:
+            page_count += 1
+            result = await self.get_markets(
+                limit=100,
+                cursor=cursor,
+                event_ticker=event_ticker,
+                series_ticker=series_ticker,
+                status=status
+            )
+
+            markets = result.get('markets', [])
+            all_markets.extend(markets)
+
+            self.logger.debug(
+                f"Pagination: Fetched page {page_count}, "
+                f"{len(markets)} markets, total: {len(all_markets)}"
+            )
+
+            # Check stopping conditions
+            if max_items and len(all_markets) >= max_items:
+                return all_markets[:max_items]
+
+            cursor = result.get('cursor')
+            if not cursor:
+                break
+
+        return all_markets
+
+    async def get_all_events(
+        self,
+        series_ticker: Optional[str] = None,
+        status: Optional[str] = None,
+        max_items: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Auto-paginate through all events.
+
+        Args:
+            series_ticker: Filter by series ticker
+            status: Filter by status
+            max_items: Maximum total items to fetch (None = unlimited)
+
+        Returns:
+            List of all events
+        """
+        all_events = []
+        cursor = None
+
+        while True:
+            result = await self.get_events(
+                series_ticker=series_ticker,
+                status=status,
+                limit=200,
+                cursor=cursor
+            )
+
+            events = result.get('events', [])
+            all_events.extend(events)
+
+            if max_items and len(all_events) >= max_items:
+                return all_events[:max_items]
+
+            cursor = result.get('cursor')
+            if not cursor:
+                break
+
+        return all_events
+
+    async def get_all_series(
+        self,
+        tags: Optional[List[str]] = None,
+        max_items: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Auto-paginate through all series.
+
+        Args:
+            tags: Filter by tags
+            max_items: Maximum total items to fetch (None = unlimited)
+
+        Returns:
+            List of all series
+        """
+        all_series = []
+        cursor = None
+
+        while True:
+            result = await self.get_series(
+                limit=100,
+                cursor=cursor,
+                tags=tags
+            )
+
+            series = result.get('series', [])
+            all_series.extend(series)
+
+            if max_items and len(all_series) >= max_items:
+                return all_series[:max_items]
+
+            cursor = result.get('cursor')
+            if not cursor:
+                break
+
+        return all_series
 
     async def close(self) -> None:
         """Close the HTTP client."""
