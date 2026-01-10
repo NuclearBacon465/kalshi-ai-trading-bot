@@ -715,7 +715,8 @@ class KalshiClient(TradingLoggerMixin):
         type_: str = "market",
         yes_price: Optional[int] = None,
         no_price: Optional[int] = None,
-        expiration_ts: Optional[int] = None
+        expiration_ts: Optional[int] = None,
+        order_group_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Place a trading order.
@@ -732,9 +733,25 @@ class KalshiClient(TradingLoggerMixin):
             yes_price: Yes price in cents (1-99, per Kalshi Quick Start)
             no_price: No price in cents (1-99, per Kalshi Quick Start)
             expiration_ts: Order expiration timestamp
+            order_group_id: Optional order group ID for risk management
+                          (see create_order_group for details)
 
         Returns:
             Order response (HTTP 201 on success per Kalshi Quick Start)
+
+        Example:
+            # Create order with order group for risk management
+            group = await client.create_order_group(contracts_limit=100)
+            order = await client.place_order(
+                ticker="MARKET-TICKER",
+                client_order_id=str(uuid.uuid4()),
+                side="yes",
+                action="buy",
+                count=10,
+                type_="limit",
+                yes_price=55,
+                order_group_id=group['order_group_id']
+            )
         """
         order_data = {
             "ticker": ticker,
@@ -744,13 +761,15 @@ class KalshiClient(TradingLoggerMixin):
             "count": count,
             "type": type_
         }
-        
+
         if yes_price is not None:
             order_data["yes_price"] = yes_price
         if no_price is not None:
             order_data["no_price"] = no_price
         if expiration_ts:
             order_data["expiration_ts"] = expiration_ts
+        if order_group_id:
+            order_data["order_group_id"] = order_group_id
         
         # --- Sanitize + enforce Kalshi API requirements ---
         # 1. Validate and convert count to integer
