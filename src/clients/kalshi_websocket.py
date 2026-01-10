@@ -17,6 +17,7 @@ import json
 import websockets
 import time
 from typing import Optional, Callable, Dict, Any
+from urllib.parse import urlparse
 from datetime import datetime
 from collections import deque
 
@@ -40,8 +41,7 @@ class KalshiWebSocketClient:
         self.kalshi_client = kalshi_client or KalshiClient()
         self.logger = get_trading_logger("kalshi_websocket")
 
-        # WebSocket URL - trying with full path (docs show base URL only)
-        self.ws_url = "wss://api.elections.kalshi.com/trade-api/ws/v2"
+        self.ws_url = settings.api.kalshi_ws_url
         self.websocket = None
         self.is_connected = False
         self.should_reconnect = True
@@ -49,23 +49,27 @@ class KalshiWebSocketClient:
         # Callbacks for different message types
         self.callbacks = {
             'ticker': [],
+            'orderbook_snapshot': [],
             'orderbook_delta': [],
             'fill': [],
             'trade': [],
             'market_positions': [],
             'market_lifecycle_v2': [],
-            'communications': [],
-            'subscriptions': []  # For list_subscriptions response
+            'event_lifecycle': [],
+            'multivariate': [],
+            'communications': []
         }
 
         # Subscribed tickers
         self.subscribed_tickers = set()
+        self.subscription_ids = {}
+        self.orderbook_snapshots = set()
 
         # Connection management
         self.reconnect_delay = 1  # Start with 1 second
         self.max_reconnect_delay = 60  # Max 60 seconds
         self.last_message_time = time.time()
-        self.heartbeat_interval = 30  # Ping every 30 seconds
+        self.heartbeat_interval = 10  # Ping every 10 seconds
 
         # Message queue for processing
         self.message_queue = asyncio.Queue()
@@ -81,37 +85,95 @@ class KalshiWebSocketClient:
             # Ensure private key is loaded before signing
             self.kalshi_client._load_private_key()
 
-            # Get authentication headers
-            timestamp = str(int(time.time() * 1000))
-            signature = self.kalshi_client._sign_request(timestamp, "GET", "/trade-api/ws/v2")
-
-            # Build headers using dictionary format (per Kalshi official documentation)
-            headers = {
-                "KALSHI-ACCESS-KEY": self.kalshi_client.api_key,
-                "KALSHI-ACCESS-SIGNATURE": signature,
-                "KALSHI-ACCESS-TIMESTAMP": timestamp
-            }
+            parsed_path = urlparse(self.ws_url).path or "/"
+            default_signing_path = settings.api.kalshi_ws_signing_path
+            signing_paths = []
+            if parsed_path not in ("", "/"):
+                signing_paths.append(parsed_path)
+            if default_signing_path not in signing_paths:
+                signing_paths.append(default_signing_path)
+            if "/" not in signing_paths:
+                signing_paths.append("/")
 
             self.logger.info("Connecting to Kalshi WebSocket...")
-            self.logger.debug(f"WebSocket auth - Timestamp: {timestamp}, API Key: {self.kalshi_client.api_key[:10]}..., Signature length: {len(signature)}")
-            self.websocket = await websockets.connect(
-                self.ws_url,
-                additional_headers=headers,
-                ping_interval=self.heartbeat_interval,
-                ping_timeout=10
+            connection_errors = []
+
+            for signing_path in signing_paths:
+                timestamp = str(int(time.time() * 1000))
+                signature = self.kalshi_client._sign_request(timestamp, "GET", signing_path)
+                headers = {
+                    "KALSHI-ACCESS-KEY": self.kalshi_client.api_key,
+                    "KALSHI-ACCESS-SIGNATURE": signature,
+                    "KALSHI-ACCESS-TIMESTAMP": timestamp,
+                    "Content-Type": "application/json",
+                    "X-API-KEY": self.kalshi_client.api_key
+                }
+
+                self.logger.debug(
+                    "WebSocket auth attempt",
+                    extra={
+                        "signing_path": signing_path,
+                        "timestamp": timestamp,
+                        "api_key_prefix": f"{self.kalshi_client.api_key[:10]}...",
+                        "signature_length": len(signature)
+                    }
+                )
+
+                try:
+                    self.websocket = await websockets.connect(
+                        self.ws_url,
+                        additional_headers=headers,
+                        ping_interval=self.heartbeat_interval,
+                        ping_timeout=10
+                    )
+                    self.is_connected = True
+                    self.reconnect_delay = 1  # Reset backoff on successful connection
+                    self.last_message_time = time.time()
+
+                    self.logger.info("✅ WebSocket connected successfully")
+
+                    # Resubscribe to all tickers after reconnection
+                    if self.subscribed_tickers:
+                        await self._resubscribe_all()
+
+                    return True
+                except websockets.exceptions.InvalidStatus as e:
+                    connection_errors.append(f"{signing_path}: {e}")
+                except Exception as e:
+                    connection_errors.append(f"{signing_path}: {e}")
+
+            # Fallback: try api-key-only auth if signature auth fails
+            try:
+                headers = {
+                    "KALSHI-ACCESS-KEY": self.kalshi_client.api_key,
+                    "Content-Type": "application/json",
+                    "X-API-KEY": self.kalshi_client.api_key
+                }
+                self.logger.debug(
+                    "WebSocket auth attempt (api-key only)",
+                    extra={"api_key_prefix": f"{self.kalshi_client.api_key[:10]}..."}
+                )
+                self.websocket = await websockets.connect(
+                    self.ws_url,
+                    additional_headers=headers,
+                    ping_interval=self.heartbeat_interval,
+                    ping_timeout=10
+                )
+                self.is_connected = True
+                self.reconnect_delay = 1
+                self.last_message_time = time.time()
+                self.logger.info("✅ WebSocket connected successfully (api-key only)")
+                if self.subscribed_tickers:
+                    await self._resubscribe_all()
+                return True
+            except websockets.exceptions.InvalidStatus as e:
+                connection_errors.append(f"api-key-only: {e}")
+            except Exception as e:
+                connection_errors.append(f"api-key-only: {e}")
+
+            raise RuntimeError(
+                f"All WebSocket auth attempts failed: {connection_errors}"
             )
-
-            self.is_connected = True
-            self.reconnect_delay = 1  # Reset backoff on successful connection
-            self.last_message_time = time.time()
-
-            self.logger.info("✅ WebSocket connected successfully")
-
-            # Resubscribe to all tickers after reconnection
-            if self.subscribed_tickers:
-                await self._resubscribe_all()
-
-            return True
 
         except Exception as e:
             self.logger.error(f"WebSocket connection failed: {e}")
@@ -143,7 +205,6 @@ class KalshiWebSocketClient:
                 "id": self._message_id,
                 "cmd": "subscribe",
                 "params": {
-                    "channels": ["ticker"],
                     "market_tickers": [ticker]
                 }
             }
@@ -199,8 +260,7 @@ class KalshiWebSocketClient:
                 "id": self._message_id,
                 "cmd": "subscribe",
                 "params": {
-                    "channels": ["orderbook_delta"],
-                    "market_tickers": [ticker]
+                    "market_ticker": ticker
                 }
             }
             self._message_id += 1
@@ -399,6 +459,215 @@ class KalshiWebSocketClient:
             await self.subscribe_ticker(ticker)
             await asyncio.sleep(0.1)  # Avoid overwhelming the server
 
+    async def subscribe_trades(self, tickers: Optional[list[str]] = None):
+        """Subscribe to public trade notifications."""
+        if not self.is_connected:
+            return False
+
+        try:
+            message = {
+                "type": "subscribe",
+                "channel": "trade"
+            }
+            if tickers:
+                message["params"] = {"market_tickers": tickers}
+
+            await self.websocket.send(json.dumps(message))
+            self.logger.info("📈 Subscribed to public trades")
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to subscribe to trades: {e}")
+            return False
+
+    async def subscribe_market_positions(self, tickers: Optional[list[str]] = None):
+        """Subscribe to real-time market position updates."""
+        if not self.is_connected:
+            return False
+
+        try:
+            message = {
+                "type": "subscribe",
+                "channel": "market_positions"
+            }
+            if tickers:
+                message["params"] = {"market_tickers": tickers}
+
+            await self.websocket.send(json.dumps(message))
+            self.logger.info("📊 Subscribed to market positions")
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to subscribe to market positions: {e}")
+            return False
+
+    async def subscribe_market_lifecycle(self, tickers: Optional[list[str]] = None):
+        """Subscribe to market and event lifecycle updates."""
+        if not self.is_connected:
+            return False
+
+        try:
+            message = {
+                "type": "subscribe",
+                "channel": "market_lifecycle_v2"
+            }
+            if tickers:
+                message["params"] = {"market_tickers": tickers}
+
+            await self.websocket.send(json.dumps(message))
+            self.logger.info("🧬 Subscribed to market lifecycle")
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to subscribe to market lifecycle: {e}")
+            return False
+
+    async def subscribe_multivariate(self, tickers: Optional[list[str]] = None):
+        """Subscribe to multivariate lookup notifications."""
+        if not self.is_connected:
+            return False
+
+        try:
+            message = {
+                "type": "subscribe",
+                "channel": "multivariate"
+            }
+            if tickers:
+                message["params"] = {"market_tickers": tickers}
+
+            await self.websocket.send(json.dumps(message))
+            self.logger.info("🧩 Subscribed to multivariate updates")
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to subscribe to multivariate updates: {e}")
+            return False
+
+    async def subscribe_communications(self):
+        """Subscribe to communications (RFQs/quotes) updates."""
+        if not self.is_connected:
+            return False
+
+        try:
+            message = {
+                "type": "subscribe",
+                "channel": "communications"
+            }
+
+            await self.websocket.send(json.dumps(message))
+            self.logger.info("📨 Subscribed to communications")
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to subscribe to communications: {e}")
+            return False
+
+    async def unsubscribe(self, channel: str, tickers: Optional[list[str]] = None, sid: Optional[str] = None):
+        """Unsubscribe from a channel or specific markets."""
+        if not self.is_connected:
+            return False
+
+        try:
+            message = {
+                "type": "unsubscribe",
+                "channel": channel
+            }
+
+            if sid:
+                message["sid"] = sid
+            elif tickers:
+                message["params"] = {"market_tickers": tickers}
+
+            await self.websocket.send(json.dumps(message))
+            self.logger.info(f"📴 Unsubscribed from {channel}")
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to unsubscribe from {channel}: {e}")
+            return False
+
+    async def unsubscribe_ticker(self, ticker: str):
+        """Unsubscribe from a ticker channel."""
+        return await self.unsubscribe("ticker", tickers=[ticker])
+
+    async def list_subscriptions(self):
+        """List all active subscriptions."""
+        if not self.is_connected:
+            return False
+
+        try:
+            message = {
+                "type": "list_subscriptions"
+            }
+            await self.websocket.send(json.dumps(message))
+            self.logger.info("📋 Requested subscription list")
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to list subscriptions: {e}")
+            return False
+
+    async def update_subscription_add_markets(self, channel: str, tickers: list[str], sid: Optional[str] = None):
+        """Add markets to an existing subscription."""
+        if not self.is_connected:
+            return False
+
+        try:
+            message = {
+                "type": "update_subscription",
+                "action": "add_markets",
+                "channel": channel,
+                "params": {"market_tickers": tickers}
+            }
+            if sid:
+                message["sid"] = sid
+            elif channel in self.subscription_ids:
+                message["sid"] = self.subscription_ids[channel]
+
+            await self.websocket.send(json.dumps(message))
+            self.logger.info(f"➕ Added markets to {channel} subscription")
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to add markets for {channel}: {e}")
+            return False
+
+    async def update_subscription_remove_markets(self, channel: str, tickers: list[str], sid: Optional[str] = None):
+        """Remove markets from an existing subscription."""
+        if not self.is_connected:
+            return False
+
+        try:
+            message = {
+                "type": "update_subscription",
+                "action": "delete_markets",
+                "channel": channel,
+                "params": {"market_tickers": tickers}
+            }
+            if sid:
+                message["sid"] = sid
+            elif channel in self.subscription_ids:
+                message["sid"] = self.subscription_ids[channel]
+
+            await self.websocket.send(json.dumps(message))
+            self.logger.info(f"➖ Removed markets from {channel} subscription")
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to remove markets for {channel}: {e}")
+            return False
+
+    async def update_subscription_single_sid(self, sid: str, channel: Optional[str] = None):
+        """Update subscription using single sid format."""
+        if not self.is_connected:
+            return False
+
+        try:
+            message = {
+                "type": "update_subscription",
+                "sid": sid
+            }
+            if channel:
+                message["channel"] = channel
+
+            await self.websocket.send(json.dumps(message))
+            self.logger.info("🔁 Updated subscription by sid")
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to update subscription by sid: {e}")
+            return False
+
     def on_ticker_update(self, callback: Callable):
         """Register callback for ticker updates."""
         self.callbacks['ticker'].append(callback)
@@ -411,9 +680,33 @@ class KalshiWebSocketClient:
         """Register callback for orderbook updates."""
         self.callbacks['orderbook_delta'].append(callback)
 
+    def on_orderbook_snapshot(self, callback: Callable):
+        """Register callback for orderbook snapshot updates."""
+        self.callbacks['orderbook_snapshot'].append(callback)
+
     def on_trade(self, callback: Callable):
         """Register callback for trade notifications."""
         self.callbacks['trade'].append(callback)
+
+    def on_market_positions(self, callback: Callable):
+        """Register callback for market position updates."""
+        self.callbacks['market_positions'].append(callback)
+
+    def on_market_lifecycle(self, callback: Callable):
+        """Register callback for market lifecycle updates."""
+        self.callbacks['market_lifecycle_v2'].append(callback)
+
+    def on_event_lifecycle(self, callback: Callable):
+        """Register callback for event lifecycle updates."""
+        self.callbacks['event_lifecycle'].append(callback)
+
+    def on_multivariate(self, callback: Callable):
+        """Register callback for multivariate updates."""
+        self.callbacks['multivariate'].append(callback)
+
+    def on_communications(self, callback: Callable):
+        """Register callback for communications updates."""
+        self.callbacks['communications'].append(callback)
 
     async def _process_message(self, message: Dict[str, Any]):
         """Process incoming WebSocket message."""
@@ -435,21 +728,45 @@ class KalshiWebSocketClient:
                 return
 
             if msg_type == 'subscribed':
+                sid = message.get('sid')
+                if channel and sid:
+                    self.subscription_ids[channel] = sid
                 self.logger.info(f"✅ Subscription confirmed: {channel}")
                 return
 
-            # Route to appropriate callbacks
-            if channel in self.callbacks:
-                data = message.get('data', message)
+            if msg_type == 'unsubscribed':
+                self.logger.info(f"✅ Unsubscribed: {channel}")
+                return
 
-                for callback in self.callbacks[channel]:
+            if msg_type == 'ok':
+                self.logger.info(f"✅ Subscription update OK: {channel}")
+                return
+
+            effective_channel = channel or msg_type
+
+            if msg_type == 'orderbook_snapshot':
+                effective_channel = 'orderbook_snapshot'
+            if msg_type == 'orderbook_delta' and not channel:
+                effective_channel = 'orderbook_delta'
+            if msg_type == 'event_lifecycle' and not channel:
+                effective_channel = 'event_lifecycle'
+
+            # Route to appropriate callbacks
+            if effective_channel in self.callbacks:
+                data = message.get('data', message)
+                if effective_channel == 'orderbook_snapshot':
+                    ticker = data.get('ticker') or data.get('market_ticker')
+                    if ticker:
+                        self.orderbook_snapshots.add(ticker)
+
+                for callback in self.callbacks[effective_channel]:
                     try:
                         if asyncio.iscoroutinefunction(callback):
                             await callback(data)
                         else:
                             callback(data)
                     except Exception as e:
-                        self.logger.error(f"Callback error for {channel}: {e}")
+                        self.logger.error(f"Callback error for {effective_channel}: {e}")
 
             self.last_message_time = time.time()
 
@@ -474,6 +791,11 @@ class KalshiWebSocketClient:
                 async for message_str in self.websocket:
                     try:
                         message = json.loads(message_str)
+                        if message.get('channel') == 'orderbook_delta':
+                            ticker = message.get('data', {}).get('ticker') or message.get('data', {}).get('market_ticker')
+                            if ticker and ticker not in self.orderbook_snapshots:
+                                self.logger.debug("Skipping orderbook delta before snapshot", ticker=ticker)
+                                continue
                         await self._process_message(message)
                     except json.JSONDecodeError as e:
                         self.logger.error(f"Invalid JSON received: {e}")

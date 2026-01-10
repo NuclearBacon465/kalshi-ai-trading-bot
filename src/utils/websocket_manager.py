@@ -66,6 +66,9 @@ class WebSocketManager:
             await self.ws_client.subscribe_fills()
             self.logger.info("✅ Subscribed to order fills")
 
+            self.ws_client.on_ticker_update(self._handle_ticker_update)
+            self.ws_client.on_fill(self._handle_fill_notification)
+
             # Start listening to messages
             self.is_running = True
             self.listen_task = asyncio.create_task(self._listen_loop())
@@ -204,10 +207,7 @@ class WebSocketManager:
                     continue
 
                 try:
-                    # Listen for messages (this is already a loop in the client)
-                    # We just need to process them
-                    await self._process_messages()
-
+                    await self.ws_client.listen()
                 except asyncio.CancelledError:
                     break
                 except Exception as e:
@@ -221,30 +221,16 @@ class WebSocketManager:
         finally:
             self.is_running = False
 
-    async def _process_messages(self):
-        """Process incoming WebSocket messages."""
-        if not self.ws_client or not hasattr(self.ws_client, 'message_queue'):
-            # If WebSocket client doesn't have message queue, use listen() directly
-            # This will depend on the actual implementation
-            await asyncio.sleep(0.1)
-            return
-
-        # In the actual implementation, KalshiWebSocketClient.listen() handles messages
-        # For now, we'll integrate by having the client call our callbacks
-        # This is a placeholder - actual implementation depends on WebSocket client structure
-
-        await asyncio.sleep(0.1)
-
     async def _handle_ticker_update(self, data: Dict):
         """Handle ticker price update from WebSocket."""
-        ticker = data.get('ticker')
+        ticker = data.get('ticker') or data.get('market_ticker')
         if not ticker:
             return
 
         # Update price cache
         self.price_cache[ticker] = {
-            'yes_price': data.get('yes_price', 0),
-            'no_price': data.get('no_price', 0),
+            'yes_price': data.get('yes_price', data.get('yes_price_dollars', 0)),
+            'no_price': data.get('no_price', data.get('no_price_dollars', 0)),
             'timestamp': datetime.now(),
             'volume': data.get('volume', 0),
             'last_price': data.get('last_price')

@@ -47,7 +47,7 @@ pip install --upgrade pip
 pip install -r requirements.txt
 
 # Configure API keys
-cp .env.example .env
+cp env.template .env
 nano .env  # Edit and add your API keys (see Configuration section)
 
 # Run system check
@@ -83,7 +83,7 @@ python -m pip install --upgrade pip
 pip install -r requirements.txt
 
 # Configure API keys
-copy .env.example .env
+copy env.template .env
 notepad .env  # Edit and add your API keys
 
 # Run system check
@@ -120,7 +120,7 @@ pip install --upgrade pip
 pip install -r requirements.txt
 
 # Configure
-cp .env.example .env
+cp env.template .env
 nano .env  # Add API keys
 
 # System check
@@ -233,7 +233,7 @@ If you get errors:
 STEP 6: Configure Environment Variables
 ---------------------------------------
 
-cp .env.example .env
+cp env.template .env
 
 Then edit .env and add:
 

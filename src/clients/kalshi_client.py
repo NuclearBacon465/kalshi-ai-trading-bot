@@ -8,9 +8,11 @@ import base64
 import hashlib
 import hmac
 import json
+import os
+import re
+from pathlib import Path
 import time
 from datetime import datetime, timedelta
-from pathlib import Path
 from typing import Dict, List, Optional, Any, Union
 from urllib.parse import urlencode
 
@@ -51,11 +53,13 @@ class KalshiClient(TradingLoggerMixin):
     _min_request_interval = 0.35  # ~2.86 req/sec (conservative for Basic tier)
 
     def __init__(
-        self,
-        api_key: Optional[str] = None,
-        private_key_path: str = "kalshi_private_key",
+        self, 
+        api_key: Optional[str] = None, 
+        private_key_path: Optional[str] = None,
         max_retries: int = 5,
-        backoff_factor: float = 0.5
+        backoff_factor: float = 0.5,
+        private_key_pem: Optional[str] = None,
+        private_key_b64: Optional[str] = None
     ):
         """
         Initialize Kalshi client.
@@ -73,7 +77,9 @@ class KalshiClient(TradingLoggerMixin):
         """
         self.api_key = api_key or settings.api.kalshi_api_key
         self.base_url = settings.api.kalshi_base_url
-        self.private_key_path = private_key_path
+        self.private_key_path = private_key_path or settings.api.kalshi_private_key_path
+        self.private_key_pem = private_key_pem or settings.api.kalshi_private_key_pem
+        self.private_key_b64 = private_key_b64 or settings.api.kalshi_private_key_b64
         self.private_key = None
         self.max_retries = max_retries
         self.backoff_factor = backoff_factor
@@ -108,19 +114,68 @@ class KalshiClient(TradingLoggerMixin):
         try:
             if self.private_key is not None:
                 return
-            private_key_path = Path(self.private_key_path)
-            if not private_key_path.exists():
-                raise KalshiAPIError(f"Private key file not found: {self.private_key_path}")
-            
-            with open(private_key_path, 'rb') as f:
+            if self.private_key_pem:
                 self.private_key = serialization.load_pem_private_key(
-                    f.read(),
+                    self._normalize_pem_text(self.private_key_pem),
                     password=None
                 )
+            elif self.private_key_b64:
+                decoded = base64.b64decode(self.private_key_b64)
+                self.private_key = serialization.load_pem_private_key(
+                    decoded,
+                    password=None
+                )
+            else:
+                if "BEGIN PRIVATE KEY" in self.private_key_path or "BEGIN RSA PRIVATE KEY" in self.private_key_path:
+                    self.private_key = serialization.load_pem_private_key(
+                        self._normalize_pem_text(self.private_key_path),
+                        password=None
+                    )
+                else:
+                    env_key_text = os.getenv(self.private_key_path, "")
+                    if env_key_text:
+                        self.private_key = serialization.load_pem_private_key(
+                            self._normalize_pem_text(env_key_text),
+                            password=None
+                        )
+                    else:
+                        private_key_path = Path(self.private_key_path)
+                        if private_key_path.exists():
+                            with open(private_key_path, "rb") as f:
+                                self.private_key = serialization.load_pem_private_key(
+                                    f.read(),
+                                    password=None
+                                )
+                        else:
+                            try:
+                                decoded = base64.b64decode(self.private_key_path)
+                                self.private_key = serialization.load_pem_private_key(
+                                    decoded,
+                                    password=None
+                                )
+                            except Exception as decode_error:
+                                raise KalshiAPIError(
+                                    "Private key text was not valid PEM, file path, or base64."
+                                ) from decode_error
             self.logger.info("Private key loaded successfully")
         except Exception as e:
             self.logger.error("Failed to load private key", error=str(e))
             raise KalshiAPIError(f"Failed to load private key: {e}")
+
+    def _normalize_pem_text(self, pem_text: str) -> bytes:
+        normalized = pem_text.replace("\\n", "\n").strip()
+        begin_match = re.search(r"-----BEGIN [A-Z ]+-----", normalized)
+        end_match = re.search(r"-----END [A-Z ]+-----", normalized)
+        if not begin_match or not end_match:
+            return normalized.encode("utf-8")
+        if "\n" not in normalized:
+            header = begin_match.group(0)
+            footer = end_match.group(0)
+            body = normalized[begin_match.end():end_match.start()]
+            body = re.sub(r"\s+", "", body)
+            wrapped = "\n".join(body[i:i + 64] for i in range(0, len(body), 64))
+            normalized = f"{header}\n{wrapped}\n{footer}\n"
+        return normalized.encode("utf-8")
     
     def _sign_request(self, timestamp: str, method: str, path: str) -> str:
         """
