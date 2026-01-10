@@ -267,19 +267,22 @@ class KalshiClient(TradingLoggerMixin):
     
     async def get_balance(self) -> Dict[str, Any]:
         """
-        Get account balance.
+        Get account balance and portfolio value.
 
-        Per Kalshi API: Returns current balance in cents. Does not include
-        value tied up in resting orders (use get_total_resting_order_value for that).
+        Per Kalshi API: Returns balance (available for trading) and portfolio_value
+        (current value of all positions). Both values in cents.
 
         Returns:
             Dict with:
-            - balance: Available balance in cents
+            - balance: Available balance in cents (amount available for trading)
+            - portfolio_value: Portfolio value in cents (current value of all positions)
+            - updated_ts: Unix timestamp of last balance update
 
         Example:
             result = await client.get_balance()
             balance_dollars = result['balance'] / 100
-            print(f"Available balance: ${balance_dollars:.2f}")
+            portfolio_dollars = result['portfolio_value'] / 100
+            print(f"Available: ${balance_dollars:.2f}, Portfolio: ${portfolio_dollars:.2f}")
         """
         return await self._make_authenticated_request("GET", "/trade-api/v2/portfolio/balance")
     
@@ -287,7 +290,7 @@ class KalshiClient(TradingLoggerMixin):
         self,
         ticker: Optional[str] = None,
         event_ticker: Optional[str] = None,
-        settlement_status: Optional[str] = None,
+        count_filter: Optional[str] = None,
         limit: int = 100,
         cursor: Optional[str] = None
     ) -> Dict[str, Any]:
@@ -295,19 +298,21 @@ class KalshiClient(TradingLoggerMixin):
         Get portfolio positions.
 
         Per Kalshi API: Returns current positions (both market-level and
-        event-level aggregated positions). As of Dec 11, 2025, only returns
-        UNSETTLED positions. Use get_settlements() for settled positions.
+        event-level aggregated positions). Includes market_positions and
+        event_positions arrays.
 
         Args:
             ticker: Filter by market ticker
-            event_ticker: Filter by event ticker
-            settlement_status: Filter by settlement status (unsettled, settled)
-            limit: Number of results per page (default 100, max 200)
+            event_ticker: Filter by event ticker (comma-separated list, max 10)
+            count_filter: Restrict to positions with non-zero values in these fields
+                         (comma-separated: "position", "total_traded")
+            limit: Number of results per page (default 100, max 1000)
             cursor: Pagination cursor
 
         Returns:
             Dict with:
-            - market_positions: Array of position objects
+            - market_positions: Array of market-level positions
+            - event_positions: Array of event-level positions
             - cursor: Pagination cursor for next page
 
         Example:
@@ -315,6 +320,9 @@ class KalshiClient(TradingLoggerMixin):
             result = await client.get_positions()
             for pos in result.get('market_positions', []):
                 print(f"{pos['ticker']}: {pos['position']} contracts")
+
+            # Get only positions with actual contracts
+            result = await client.get_positions(count_filter="position")
 
             # Get positions for specific market
             result = await client.get_positions(ticker="KXHIGHNY-24JAN01-T60")
@@ -324,8 +332,8 @@ class KalshiClient(TradingLoggerMixin):
             params["ticker"] = ticker
         if event_ticker:
             params["event_ticker"] = event_ticker
-        if settlement_status:
-            params["settlement_status"] = settlement_status
+        if count_filter:
+            params["count_filter"] = count_filter
         if cursor:
             params["cursor"] = cursor
         return await self._make_authenticated_request("GET", "/trade-api/v2/portfolio/positions", params=params)
@@ -382,23 +390,48 @@ class KalshiClient(TradingLoggerMixin):
 
     async def get_settlements(
         self,
+        ticker: Optional[str] = None,
+        event_ticker: Optional[str] = None,
+        min_ts: Optional[int] = None,
+        max_ts: Optional[int] = None,
         limit: int = 100,
         cursor: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Get settled positions.
+        Get settlement history for resolved markets.
 
-        IMPORTANT: As of Dec 11, 2025, get_positions() only returns UNSETTLED positions.
-        Use this endpoint to get settled positions.
+        Per Kalshi API: Returns settlements with ticker, market_result (yes/no),
+        counts, costs, revenue, and settlement timestamp.
 
         Args:
-            limit: Number of settlements to return
+            ticker: Filter by market ticker
+            event_ticker: Filter by event ticker (comma-separated list, max 10)
+            min_ts: Filter settlements after this Unix timestamp
+            max_ts: Filter settlements before this Unix timestamp
+            limit: Number of results per page (default 100, max 200)
             cursor: Pagination cursor
 
         Returns:
-            Settlements data with event_ticker, fees_paid, etc.
+            Dict with:
+            - settlements: Array of settlement objects
+            - cursor: Pagination cursor for next page
+
+        Example:
+            # Get recent settlements
+            result = await client.get_settlements(limit=10)
+            for settlement in result['settlements']:
+                print(f"{settlement['ticker']}: {settlement['market_result']}")
+                print(f"  Revenue: ${settlement['revenue']/100:.2f}")
         """
         params = {"limit": limit}
+        if ticker:
+            params["ticker"] = ticker
+        if event_ticker:
+            params["event_ticker"] = event_ticker
+        if min_ts:
+            params["min_ts"] = min_ts
+        if max_ts:
+            params["max_ts"] = max_ts
         if cursor:
             params["cursor"] = cursor
 
@@ -412,12 +445,12 @@ class KalshiClient(TradingLoggerMixin):
         """
         Get total value of all resting orders across all markets.
 
-        Per Kalshi API: Returns the total value committed in resting (open) orders.
-        Useful for understanding capital allocation and available buying power.
+        Per Kalshi API: Returns the total value, in cents, of resting orders.
+        Only intended for FCM members (rare). If uncertain, likely doesn't apply.
 
         Returns:
             Dict with:
-            - total_resting_order_value: Total value in cents
+            - total_resting_order_value: Total value of resting orders in cents
 
         Example:
             result = await client.get_total_resting_order_value()
@@ -426,7 +459,7 @@ class KalshiClient(TradingLoggerMixin):
         """
         return await self._make_authenticated_request(
             "GET",
-            "/trade-api/v2/portfolio/total_resting_order_value"
+            "/trade-api/v2/portfolio/summary/total_resting_order_value"
         )
 
     async def get_orders(
@@ -1380,7 +1413,7 @@ class KalshiClient(TradingLoggerMixin):
         self,
         name: str,
         public_key: str,
-        scopes: List[str]
+        scopes: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """
         Create a new API key using your own RSA public key.
@@ -1391,7 +1424,9 @@ class KalshiClient(TradingLoggerMixin):
         Args:
             name: Descriptive name for the key (e.g., "Trading Bot Production")
             public_key: Your RSA public key in PEM format
-            scopes: List of permission scopes (e.g., ["read", "trade"])
+            scopes: List of permission scopes (e.g., ["read", "write"]).
+                   If 'write' is included, 'read' must also be included.
+                   Defaults to full access (['read', 'write']) if not provided.
 
         Returns:
             Dict with:
@@ -1411,11 +1446,10 @@ class KalshiClient(TradingLoggerMixin):
                 format=serialization.PublicFormat.SubjectPublicKeyInfo
             ).decode()
 
-            # Create API key
+            # Create API key (defaults to full access)
             result = await client.create_api_key(
                 name="My Trading Bot",
-                public_key=public_key_pem,
-                scopes=["read", "trade"]
+                public_key=public_key_pem
             )
             print(f"API Key ID: {result['api_key_id']}")
         """
@@ -1423,23 +1457,26 @@ class KalshiClient(TradingLoggerMixin):
             raise ValueError("name cannot be empty")
         if not public_key:
             raise ValueError("public_key cannot be empty")
-        if not scopes or len(scopes) == 0:
-            raise ValueError("scopes must contain at least one scope")
+
+        json_data = {
+            "name": name,
+            "public_key": public_key
+        }
+
+        # Only include scopes if provided (API defaults to ['read', 'write'])
+        if scopes is not None:
+            json_data["scopes"] = scopes
 
         return await self._make_authenticated_request(
             "POST",
             "/trade-api/v2/api_keys",
-            json_data={
-                "name": name,
-                "public_key": public_key,
-                "scopes": scopes
-            }
+            json_data=json_data
         )
 
     async def generate_api_key(
         self,
         name: str,
-        scopes: List[str]
+        scopes: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """
         Generate a new API key with Kalshi creating the key pair.
@@ -1451,18 +1488,19 @@ class KalshiClient(TradingLoggerMixin):
 
         Args:
             name: Descriptive name for the key
-            scopes: List of permission scopes (e.g., ["read", "trade"])
+            scopes: List of permission scopes (e.g., ["read", "write"]).
+                   If 'write' is included, 'read' must also be included.
+                   Defaults to full access (['read', 'write']) if not provided.
 
         Returns:
             Dict with:
             - api_key_id: The key ID (use in KALSHI-ACCESS-KEY header)
             - private_key: RSA private key in PEM format (SAVE THIS!)
-            - public_key: RSA public key in PEM format
 
         Example:
+            # Generate key with default full access
             result = await client.generate_api_key(
-                name="Auto-Generated Bot Key",
-                scopes=["read", "trade"]
+                name="Auto-Generated Bot Key"
             )
 
             # CRITICAL: Save private key immediately!
@@ -1474,16 +1512,17 @@ class KalshiClient(TradingLoggerMixin):
         """
         if not name:
             raise ValueError("name cannot be empty")
-        if not scopes or len(scopes) == 0:
-            raise ValueError("scopes must contain at least one scope")
+
+        json_data = {"name": name}
+
+        # Only include scopes if provided (API defaults to ['read', 'write'])
+        if scopes is not None:
+            json_data["scopes"] = scopes
 
         return await self._make_authenticated_request(
             "POST",
             "/trade-api/v2/api_keys/generate",
-            json_data={
-                "name": name,
-                "scopes": scopes
-            }
+            json_data=json_data
         )
 
     async def delete_api_key(self, api_key_id: str) -> Dict[str, Any]:
@@ -1523,16 +1562,17 @@ class KalshiClient(TradingLoggerMixin):
         by topic categories (e.g., Politics, Economics, Sports).
 
         Returns:
-            Dict with category-to-tags mapping
+            Dict with:
+            - tags_by_categories: Mapping of series categories to their associated tags
 
         Example:
             result = await client.get_tags_by_categories()
-            for category, tags in result.items():
+            for category, tags in result['tags_by_categories'].items():
                 print(f"{category}: {', '.join(tags)}")
         """
         return await self._make_authenticated_request(
             "GET",
-            "/trade-api/v2/tags/series_categories",
+            "/trade-api/v2/search/tags_by_categories",
             require_auth=False
         )
 
@@ -1540,19 +1580,23 @@ class KalshiClient(TradingLoggerMixin):
         """
         Get sport-specific filter options.
 
-        Per Kalshi API: Returns available filters for sports markets
-        (leagues, teams, players, etc.).
+        Per Kalshi API: Returns available filters organized by sport, including
+        scopes and competitions, plus ordered list of sports for display.
 
         Returns:
-            Dict with sport filter structure
+            Dict with:
+            - filters_by_sports: Mapping of sports to their filter details
+            - sport_ordering: Ordered list of sports for display
 
         Example:
             result = await client.get_filters_by_sport()
-            # Use to build sport-specific market queries
+            for sport in result['sport_ordering']:
+                filters = result['filters_by_sports'].get(sport, {})
+                print(f"{sport}: {filters}")
         """
         return await self._make_authenticated_request(
             "GET",
-            "/trade-api/v2/filters/sports",
+            "/trade-api/v2/search/filters_by_sport",
             require_auth=False
         )
 
