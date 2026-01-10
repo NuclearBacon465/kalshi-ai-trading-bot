@@ -1098,8 +1098,18 @@ class KalshiClient(TradingLoggerMixin):
         """
         Get current exchange operational status.
 
+        Per Kalshi API docs: Check if exchange and trading are active.
+
         Returns:
-            Exchange status (trading_active, etc.)
+            Dict with:
+            - exchange_active (bool): False during maintenance
+            - trading_active (bool): True during trading hours
+            - exchange_estimated_resume_time (str|None): Estimated downtime end
+
+        Example:
+            status = await client.get_exchange_status()
+            if status['trading_active']:
+                print("Trading is open!")
         """
         return await self._make_authenticated_request(
             "GET",
@@ -1107,17 +1117,73 @@ class KalshiClient(TradingLoggerMixin):
             require_auth=False
         )
 
+    async def get_exchange_announcements(self) -> Dict[str, Any]:
+        """
+        Get all exchange-wide announcements.
+
+        Per Kalshi API docs: Returns announcements array with type, message,
+        delivery_time, and status fields.
+
+        Returns:
+            Dict with announcements array
+
+        Example:
+            result = await client.get_exchange_announcements()
+            for announcement in result['announcements']:
+                print(f"{announcement['type']}: {announcement['message']}")
+        """
+        return await self._make_authenticated_request(
+            "GET",
+            "/trade-api/v2/exchange/announcements",
+            require_auth=False
+        )
+
     async def get_exchange_schedule(self) -> Dict[str, Any]:
         """
         Get exchange trading schedule.
 
+        Per Kalshi API docs: Returns standard_hours (daily schedule) and
+        maintenance_windows (planned downtime).
+
         Returns:
-            Trading hours and maintenance windows
+            Dict with schedule object containing:
+            - standard_hours: Daily trading hours by weekday
+            - maintenance_windows: Scheduled maintenance periods
+
+        Example:
+            schedule = await client.get_exchange_schedule()
+            print(f"Maintenance windows: {schedule['schedule']['maintenance_windows']}")
         """
         return await self._make_authenticated_request(
             "GET",
             "/trade-api/v2/exchange/schedule",
             require_auth=False
+        )
+
+    async def get_user_data_timestamp(self) -> Dict[str, Any]:
+        """
+        Get timestamp when user data was last validated.
+
+        Per Kalshi API docs: "There is typically a short delay before exchange
+        events are reflected in the API endpoints. Whenever possible, combine API
+        responses to PUT/POST/DELETE requests with websocket data to obtain the
+        most accurate view of the exchange state."
+
+        This endpoint shows when data from GetBalance, GetOrders, GetFills,
+        and GetPositions was last updated.
+
+        Returns:
+            Dict with:
+            - as_of_time (str): ISO 8601 timestamp of last data validation
+
+        Example:
+            result = await client.get_user_data_timestamp()
+            print(f"Data freshness: {result['as_of_time']}")
+        """
+        return await self._make_authenticated_request(
+            "GET",
+            "/trade-api/v2/exchange/user_data_timestamp",
+            require_auth=True  # This requires auth (user-specific data)
         )
 
     # ========================================================================
