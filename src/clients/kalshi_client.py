@@ -321,42 +321,172 @@ class KalshiClient(TradingLoggerMixin):
         raise KalshiAPIError(f"API request failed after {self.max_retries} retries: {last_exception}")
     
     async def get_balance(self) -> Dict[str, Any]:
-        """Get account balance."""
+        """
+        Get account balance and portfolio value.
+
+        Per Kalshi API: Returns balance (available for trading) and portfolio_value
+        (current value of all positions). Both values in cents.
+
+        Returns:
+            Dict with:
+            - balance: Available balance in cents (amount available for trading)
+            - portfolio_value: Portfolio value in cents (current value of all positions)
+            - updated_ts: Unix timestamp of last balance update
+
+        Example:
+            result = await client.get_balance()
+            balance_dollars = result['balance'] / 100
+            portfolio_dollars = result['portfolio_value'] / 100
+            print(f"Available: ${balance_dollars:.2f}, Portfolio: ${portfolio_dollars:.2f}")
+        """
         return await self._make_authenticated_request("GET", "/trade-api/v2/portfolio/balance")
     
-    async def get_positions(self, ticker: Optional[str] = None) -> Dict[str, Any]:
-        """Get portfolio positions."""
-        params = {}
-        if ticker:
-            params["ticker"] = ticker
-        return await self._make_authenticated_request("GET", "/trade-api/v2/portfolio/positions", params=params)
-    
-    async def get_fills(self, ticker: Optional[str] = None, limit: int = 100) -> Dict[str, Any]:
-        """Get order fills."""
-        params = {"limit": limit}
-        if ticker:
-            params["ticker"] = ticker
-        return await self._make_authenticated_request("GET", "/trade-api/v2/portfolio/fills", params=params)
-
-    async def get_settlements(
+    async def get_positions(
         self,
+        ticker: Optional[str] = None,
+        event_ticker: Optional[str] = None,
+        count_filter: Optional[str] = None,
         limit: int = 100,
         cursor: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Get settled positions.
+        Get portfolio positions.
 
-        IMPORTANT: As of Dec 11, 2025, get_positions() only returns UNSETTLED positions.
-        Use this endpoint to get settled positions.
+        Per Kalshi API: Returns current positions (both market-level and
+        event-level aggregated positions). Includes market_positions and
+        event_positions arrays.
 
         Args:
-            limit: Number of settlements to return
+            ticker: Filter by market ticker
+            event_ticker: Filter by event ticker (comma-separated list, max 10)
+            count_filter: Restrict to positions with non-zero values in these fields
+                         (comma-separated: "position", "total_traded")
+            limit: Number of results per page (default 100, max 1000)
             cursor: Pagination cursor
 
         Returns:
-            Settlements data with event_ticker, fees_paid, etc.
+            Dict with:
+            - market_positions: Array of market-level positions
+            - event_positions: Array of event-level positions
+            - cursor: Pagination cursor for next page
+
+        Example:
+            # Get all positions
+            result = await client.get_positions()
+            for pos in result.get('market_positions', []):
+                print(f"{pos['ticker']}: {pos['position']} contracts")
+
+            # Get only positions with actual contracts
+            result = await client.get_positions(count_filter="position")
+
+            # Get positions for specific market
+            result = await client.get_positions(ticker="KXHIGHNY-24JAN01-T60")
         """
         params = {"limit": limit}
+        if ticker:
+            params["ticker"] = ticker
+        if event_ticker:
+            params["event_ticker"] = event_ticker
+        if count_filter:
+            params["count_filter"] = count_filter
+        if cursor:
+            params["cursor"] = cursor
+        return await self._make_authenticated_request("GET", "/trade-api/v2/portfolio/positions", params=params)
+    
+    async def get_fills(
+        self,
+        ticker: Optional[str] = None,
+        order_id: Optional[str] = None,
+        min_ts: Optional[int] = None,
+        max_ts: Optional[int] = None,
+        limit: int = 100,
+        cursor: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Get order fills (executed trades).
+
+        Per Kalshi API: Returns fill history with execution prices, quantities,
+        fees, and timestamps.
+
+        Args:
+            ticker: Filter by market ticker
+            order_id: Filter by specific order ID
+            min_ts: Filter fills after this Unix timestamp
+            max_ts: Filter fills before this Unix timestamp
+            limit: Number of results per page (default 100, max 200)
+            cursor: Pagination cursor
+
+        Returns:
+            Dict with:
+            - fills: Array of fill objects with trade details
+            - cursor: Pagination cursor for next page
+
+        Example:
+            # Get recent fills
+            result = await client.get_fills(limit=10)
+            for fill in result['fills']:
+                print(f"{fill['ticker']}: {fill['count']} @ {fill['yes_price']}¢")
+
+            # Get fills for specific market
+            result = await client.get_fills(ticker="KXHIGHNY-24JAN01-T60")
+        """
+        params = {"limit": limit}
+        if ticker:
+            params["ticker"] = ticker
+        if order_id:
+            params["order_id"] = order_id
+        if min_ts:
+            params["min_ts"] = min_ts
+        if max_ts:
+            params["max_ts"] = max_ts
+        if cursor:
+            params["cursor"] = cursor
+        return await self._make_authenticated_request("GET", "/trade-api/v2/portfolio/fills", params=params)
+
+    async def get_settlements(
+        self,
+        ticker: Optional[str] = None,
+        event_ticker: Optional[str] = None,
+        min_ts: Optional[int] = None,
+        max_ts: Optional[int] = None,
+        limit: int = 100,
+        cursor: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Get settlement history for resolved markets.
+
+        Per Kalshi API: Returns settlements with ticker, market_result (yes/no),
+        counts, costs, revenue, and settlement timestamp.
+
+        Args:
+            ticker: Filter by market ticker
+            event_ticker: Filter by event ticker (comma-separated list, max 10)
+            min_ts: Filter settlements after this Unix timestamp
+            max_ts: Filter settlements before this Unix timestamp
+            limit: Number of results per page (default 100, max 200)
+            cursor: Pagination cursor
+
+        Returns:
+            Dict with:
+            - settlements: Array of settlement objects
+            - cursor: Pagination cursor for next page
+
+        Example:
+            # Get recent settlements
+            result = await client.get_settlements(limit=10)
+            for settlement in result['settlements']:
+                print(f"{settlement['ticker']}: {settlement['market_result']}")
+                print(f"  Revenue: ${settlement['revenue']/100:.2f}")
+        """
+        params = {"limit": limit}
+        if ticker:
+            params["ticker"] = ticker
+        if event_ticker:
+            params["event_ticker"] = event_ticker
+        if min_ts:
+            params["min_ts"] = min_ts
+        if max_ts:
+            params["max_ts"] = max_ts
         if cursor:
             params["cursor"] = cursor
 
@@ -366,14 +496,105 @@ class KalshiClient(TradingLoggerMixin):
             params=params
         )
 
-    async def get_orders(self, ticker: Optional[str] = None, status: Optional[str] = None) -> Dict[str, Any]:
-        """Get orders."""
-        params = {}
+    async def get_total_resting_order_value(self) -> Dict[str, Any]:
+        """
+        Get total value of all resting orders across all markets.
+
+        Per Kalshi API: Returns the total value, in cents, of resting orders.
+        Only intended for FCM members (rare). If uncertain, likely doesn't apply.
+
+        Returns:
+            Dict with:
+            - total_resting_order_value: Total value of resting orders in cents
+
+        Example:
+            result = await client.get_total_resting_order_value()
+            value_dollars = result['total_resting_order_value'] / 100
+            print(f"Capital in open orders: ${value_dollars:.2f}")
+        """
+        return await self._make_authenticated_request(
+            "GET",
+            "/trade-api/v2/portfolio/summary/total_resting_order_value"
+        )
+
+    async def get_orders(
+        self,
+        ticker: Optional[str] = None,
+        event_ticker: Optional[str] = None,
+        min_ts: Optional[int] = None,
+        max_ts: Optional[int] = None,
+        status: Optional[str] = None,
+        limit: int = 100,
+        cursor: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Get orders with filtering and pagination.
+
+        Per Kalshi API: Returns orders array with pagination support.
+        Restricts to orders with status: resting, canceled, or executed.
+
+        Args:
+            ticker: Filter by market ticker
+            event_ticker: Filter by event ticker (comma-separated list, max 10)
+            min_ts: Filter items after this Unix timestamp
+            max_ts: Filter items before this Unix timestamp
+            status: Filter by status (resting, canceled, executed)
+            limit: Number of results per page (default 100, max 200)
+            cursor: Pagination cursor from previous response
+
+        Returns:
+            Dict with:
+            - orders: Array of order objects
+            - cursor: Pagination cursor for next page
+
+        Example:
+            # Get all resting orders
+            result = await client.get_orders(status="resting", limit=50)
+            for order in result['orders']:
+                print(f"Order {order['order_id']}: {order['ticker']}")
+        """
+        params = {"limit": min(limit, 200)}  # Enforce max limit
+
         if ticker:
             params["ticker"] = ticker
+        if event_ticker:
+            params["event_ticker"] = event_ticker
+        if min_ts:
+            params["min_ts"] = min_ts
+        if max_ts:
+            params["max_ts"] = max_ts
         if status:
             params["status"] = status
-        return await self._make_authenticated_request("GET", "/trade-api/v2/portfolio/orders", params=params)
+        if cursor:
+            params["cursor"] = cursor
+
+        return await self._make_authenticated_request(
+            "GET",
+            "/trade-api/v2/portfolio/orders",
+            params=params
+        )
+
+    async def get_order(self, order_id: str) -> Dict[str, Any]:
+        """
+        Get a single order by ID.
+
+        Per Kalshi API: Endpoint for getting a single order.
+
+        Args:
+            order_id: Order ID to retrieve
+
+        Returns:
+            Dict with order object containing all order fields
+
+        Example:
+            order = await client.get_order("order-uuid-123")
+            print(f"Status: {order['order']['status']}")
+            print(f"Fill count: {order['order']['fill_count']}")
+        """
+        return await self._make_authenticated_request(
+            "GET",
+            f"/trade-api/v2/portfolio/orders/{order_id}"
+        )
     
     async def get_markets(
         self,
@@ -549,7 +770,8 @@ class KalshiClient(TradingLoggerMixin):
         type_: str = "market",
         yes_price: Optional[int] = None,
         no_price: Optional[int] = None,
-        expiration_ts: Optional[int] = None
+        expiration_ts: Optional[int] = None,
+        order_group_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Place a trading order.
@@ -566,9 +788,25 @@ class KalshiClient(TradingLoggerMixin):
             yes_price: Yes price in cents (1-99, per Kalshi Quick Start)
             no_price: No price in cents (1-99, per Kalshi Quick Start)
             expiration_ts: Order expiration timestamp
+            order_group_id: Optional order group ID for risk management
+                          (see create_order_group for details)
 
         Returns:
             Order response (HTTP 201 on success per Kalshi Quick Start)
+
+        Example:
+            # Create order with order group for risk management
+            group = await client.create_order_group(contracts_limit=100)
+            order = await client.place_order(
+                ticker="MARKET-TICKER",
+                client_order_id=str(uuid.uuid4()),
+                side="yes",
+                action="buy",
+                count=10,
+                type_="limit",
+                yes_price=55,
+                order_group_id=group['order_group_id']
+            )
         """
         order_data = {
             "ticker": ticker,
@@ -578,13 +816,15 @@ class KalshiClient(TradingLoggerMixin):
             "count": count,
             "type": type_
         }
-        
+
         if yes_price is not None:
             order_data["yes_price"] = yes_price
         if no_price is not None:
             order_data["no_price"] = no_price
         if expiration_ts:
             order_data["expiration_ts"] = expiration_ts
+        if order_group_id:
+            order_data["order_group_id"] = order_group_id
         
         # --- Sanitize + enforce Kalshi API requirements ---
         # 1. Validate and convert count to integer
@@ -935,29 +1175,90 @@ class KalshiClient(TradingLoggerMixin):
     async def amend_order(
         self,
         order_id: str,
-        new_price: Optional[int] = None,
-        new_count: Optional[int] = None
+        ticker: str,
+        side: str,
+        action: str,
+        client_order_id: str,
+        updated_client_order_id: str,
+        yes_price: Optional[int] = None,
+        no_price: Optional[int] = None,
+        yes_price_dollars: Optional[str] = None,
+        no_price_dollars: Optional[str] = None,
+        count: Optional[int] = None
     ) -> Dict[str, Any]:
         """
         Amend an existing order's price and/or quantity.
 
-        More efficient than cancel+replace, maintains queue position priority.
+        Per Kalshi API: Endpoint for amending the max number of fillable contracts
+        and/or price in an existing order. Max fillable contracts is
+        remaining_count + fill_count.
+
+        More efficient than cancel+replace, maintains better queue position priority.
 
         Args:
             order_id: Order ID to amend
-            new_price: New price in cents (1-99)
-            new_count: New quantity
+            ticker: Market ticker (required)
+            side: "yes" or "no" (required)
+            action: "buy" or "sell" (required)
+            client_order_id: Original client-specified order ID (required)
+            updated_client_order_id: New client-specified order ID (required)
+            yes_price: Updated yes price in cents (1-99)
+            no_price: Updated no price in cents (1-99)
+            yes_price_dollars: Updated yes price in fixed-point dollars
+            no_price_dollars: Updated no price in fixed-point dollars
+            count: Updated quantity (max fillable contracts)
 
         Returns:
-            Amended order
+            Dict with:
+            - old_order: The order before amendment
+            - order: The order after amendment
 
-        Note: Can only amend resting limit orders. Cannot amend filled/canceled orders.
+        Note:
+            - Exactly one of yes_price, no_price, yes_price_dollars, no_price_dollars
+              must be provided
+            - Can only amend resting limit orders
+
+        Example:
+            result = await client.amend_order(
+                order_id="order-123",
+                ticker="MARKET-TICKER",
+                side="yes",
+                action="buy",
+                client_order_id="original-id",
+                updated_client_order_id="new-id",
+                yes_price=55,
+                count=15
+            )
+            print(f"Old price: {result['old_order']['yes_price']}")
+            print(f"New price: {result['order']['yes_price']}")
         """
-        amend_data = {}
-        if new_price is not None:
-            amend_data["price"] = new_price
-        if new_count is not None:
-            amend_data["count"] = new_count
+        amend_data = {
+            "ticker": ticker,
+            "side": side,
+            "action": action,
+            "client_order_id": client_order_id,
+            "updated_client_order_id": updated_client_order_id
+        }
+
+        # Exactly one price field must be provided (per API docs)
+        price_fields = [yes_price, no_price, yes_price_dollars, no_price_dollars]
+        if sum(x is not None for x in price_fields) != 1:
+            raise ValueError(
+                "Exactly one of yes_price, no_price, yes_price_dollars, "
+                "or no_price_dollars must be provided"
+            )
+
+        if yes_price is not None:
+            amend_data["yes_price"] = yes_price
+        if no_price is not None:
+            amend_data["no_price"] = no_price
+        if yes_price_dollars is not None:
+            amend_data["yes_price_dollars"] = yes_price_dollars
+        if no_price_dollars is not None:
+            amend_data["no_price_dollars"] = no_price_dollars
+
+        if count is not None:
+            amend_data["count"] = count
 
         return await self._make_authenticated_request(
             "POST",
@@ -965,27 +1266,412 @@ class KalshiClient(TradingLoggerMixin):
             json_data=amend_data
         )
 
-    async def decrease_order(self, order_id: str, reduce_by: int) -> Dict[str, Any]:
+    async def decrease_order(
+        self,
+        order_id: str,
+        reduce_by: Optional[int] = None,
+        reduce_to: Optional[int] = None
+    ) -> Dict[str, Any]:
         """
-        Decrease an order's quantity.
+        Decrease the number of contracts in an existing order.
+
+        Per Kalshi API: This is the only kind of edit available on order quantity.
+        Cancelling an order is equivalent to decreasing an order amount to zero.
 
         Maintains better queue position than cancel+replace with lower quantity.
 
         Args:
             order_id: Order ID to decrease
-            reduce_by: Amount to reduce quantity by
+            reduce_by: Amount to reduce quantity by (must be >= 1)
+            reduce_to: Target quantity to reduce to (must be >= 0)
 
         Returns:
-            Updated order
+            Dict with updated order object
 
-        Example:
-            # Order currently has count=10, reduce by 3 → new count=7
+        Note:
+            Exactly one of reduce_by or reduce_to must be provided.
+
+        Examples:
+            # Reduce by 3 contracts (if currently 10 → becomes 7)
             await client.decrease_order("order-123", reduce_by=3)
+
+            # Reduce to exactly 5 contracts
+            await client.decrease_order("order-123", reduce_to=5)
+
+            # Cancel order completely (reduce to 0)
+            await client.decrease_order("order-123", reduce_to=0)
         """
+        if (reduce_by is None and reduce_to is None) or \
+           (reduce_by is not None and reduce_to is not None):
+            raise ValueError("Exactly one of reduce_by or reduce_to must be provided")
+
+        decrease_data = {}
+        if reduce_by is not None:
+            if reduce_by < 1:
+                raise ValueError("reduce_by must be >= 1")
+            decrease_data["reduce_by"] = reduce_by
+        if reduce_to is not None:
+            if reduce_to < 0:
+                raise ValueError("reduce_to must be >= 0")
+            decrease_data["reduce_to"] = reduce_to
+
         return await self._make_authenticated_request(
             "POST",
             f"/trade-api/v2/portfolio/orders/{order_id}/decrease",
-            json_data={"reduce_by": reduce_by}
+            json_data=decrease_data
+        )
+
+    # ============================================================================
+    # ORDER GROUPS (Risk Management - API Part 3)
+    # ============================================================================
+
+    async def get_order_groups(self) -> Dict[str, Any]:
+        """
+        Get all order groups for the authenticated user.
+
+        Per Kalshi API: Order groups allow setting a contracts_limit. When the
+        limit is hit, all orders in the group are auto-canceled and no new orders
+        can be placed until reset.
+
+        Returns:
+            Dict with order_groups array containing:
+            - id: Order group ID
+            - is_auto_cancel_enabled: Whether auto-cancel is active
+
+        Example:
+            groups = await client.get_order_groups()
+            for group in groups['order_groups']:
+                print(f"Group {group['id']}: auto-cancel={group['is_auto_cancel_enabled']}")
+        """
+        return await self._make_authenticated_request(
+            "GET",
+            "/trade-api/v2/portfolio/order_groups"
+        )
+
+    async def create_order_group(self, contracts_limit: int) -> Dict[str, Any]:
+        """
+        Create a new order group with a contracts limit.
+
+        Per Kalshi API: When the limit is hit, all orders in the group are
+        cancelled and no new orders can be placed until reset.
+
+        Useful for risk management - limit total position exposure across
+        multiple markets.
+
+        Args:
+            contracts_limit: Maximum contracts that can be matched (>= 1)
+
+        Returns:
+            Dict with order_group_id
+
+        Example:
+            # Create group with max 100 contracts
+            result = await client.create_order_group(contracts_limit=100)
+            group_id = result['order_group_id']
+
+            # Use in orders
+            await client.place_order(
+                ...,
+                order_group_id=group_id
+            )
+        """
+        if contracts_limit < 1:
+            raise ValueError("contracts_limit must be >= 1")
+
+        return await self._make_authenticated_request(
+            "POST",
+            "/trade-api/v2/portfolio/order_groups/create",
+            json_data={"contracts_limit": contracts_limit}
+        )
+
+    async def get_order_group(self, order_group_id: str) -> Dict[str, Any]:
+        """
+        Get details for a single order group.
+
+        Per Kalshi API: Retrieves all order IDs and auto-cancel status.
+
+        Args:
+            order_group_id: Order group ID
+
+        Returns:
+            Dict with:
+            - is_auto_cancel_enabled: Whether auto-cancel is active
+            - orders: List of order IDs in this group
+
+        Example:
+            group = await client.get_order_group("group-123")
+            print(f"Auto-cancel: {group['is_auto_cancel_enabled']}")
+            print(f"Orders: {group['orders']}")
+        """
+        return await self._make_authenticated_request(
+            "GET",
+            f"/trade-api/v2/portfolio/order_groups/{order_group_id}"
+        )
+
+    async def delete_order_group(self, order_group_id: str) -> Dict[str, Any]:
+        """
+        Delete an order group and cancel all orders within it.
+
+        Per Kalshi API: This permanently removes the group.
+
+        Args:
+            order_group_id: Order group ID to delete
+
+        Returns:
+            Empty dict on success
+
+        Example:
+            await client.delete_order_group("group-123")
+        """
+        return await self._make_authenticated_request(
+            "DELETE",
+            f"/trade-api/v2/portfolio/order_groups/{order_group_id}"
+        )
+
+    async def reset_order_group(self, order_group_id: str) -> Dict[str, Any]:
+        """
+        Reset the order group's matched contracts counter to zero.
+
+        Per Kalshi API: Allows new orders to be placed again after the limit
+        was hit.
+
+        Useful for daily/periodic risk limit resets.
+
+        Args:
+            order_group_id: Order group ID to reset
+
+        Returns:
+            Empty dict on success
+
+        Example:
+            # Reset daily at market open
+            await client.reset_order_group("group-123")
+            # Can now place new orders up to contracts_limit again
+        """
+        return await self._make_authenticated_request(
+            "PUT",
+            f"/trade-api/v2/portfolio/order_groups/{order_group_id}/reset",
+            json_data={}
+        )
+
+    # ============================================================================
+    # API KEYS MANAGEMENT (API Part 4)
+    # ============================================================================
+
+    async def get_api_keys(self) -> Dict[str, Any]:
+        """
+        Get all API keys for the authenticated user.
+
+        Per Kalshi API: Returns list of API keys with their IDs, names, scopes,
+        and creation timestamps. Does NOT return the private keys (security).
+
+        Returns:
+            Dict with api_keys array containing:
+            - api_key_id: Unique key identifier
+            - name: User-provided key name
+            - scopes: List of permission scopes
+            - created_at: Creation timestamp
+
+        Example:
+            result = await client.get_api_keys()
+            for key in result['api_keys']:
+                print(f"Key: {key['name']} (ID: {key['api_key_id']})")
+                print(f"  Scopes: {', '.join(key['scopes'])}")
+        """
+        return await self._make_authenticated_request(
+            "GET",
+            "/trade-api/v2/api_keys"
+        )
+
+    async def create_api_key(
+        self,
+        name: str,
+        public_key: str,
+        scopes: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """
+        Create a new API key using your own RSA public key.
+
+        Per Kalshi API: You provide your own RSA public key pair. Kalshi stores
+        the public key and you keep the private key secure for signing requests.
+
+        Args:
+            name: Descriptive name for the key (e.g., "Trading Bot Production")
+            public_key: Your RSA public key in PEM format
+            scopes: List of permission scopes (e.g., ["read", "write"]).
+                   If 'write' is included, 'read' must also be included.
+                   Defaults to full access (['read', 'write']) if not provided.
+
+        Returns:
+            Dict with:
+            - api_key_id: The created key's ID (use in KALSHI-ACCESS-KEY header)
+
+        Example:
+            # Generate RSA key pair first
+            from cryptography.hazmat.primitives.asymmetric import rsa
+            from cryptography.hazmat.primitives import serialization
+
+            private_key = rsa.generate_private_key(
+                public_exponent=65537,
+                key_size=2048
+            )
+            public_key_pem = private_key.public_key().public_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PublicFormat.SubjectPublicKeyInfo
+            ).decode()
+
+            # Create API key (defaults to full access)
+            result = await client.create_api_key(
+                name="My Trading Bot",
+                public_key=public_key_pem
+            )
+            print(f"API Key ID: {result['api_key_id']}")
+        """
+        if not name:
+            raise ValueError("name cannot be empty")
+        if not public_key:
+            raise ValueError("public_key cannot be empty")
+
+        json_data = {
+            "name": name,
+            "public_key": public_key
+        }
+
+        # Only include scopes if provided (API defaults to ['read', 'write'])
+        if scopes is not None:
+            json_data["scopes"] = scopes
+
+        return await self._make_authenticated_request(
+            "POST",
+            "/trade-api/v2/api_keys",
+            json_data=json_data
+        )
+
+    async def generate_api_key(
+        self,
+        name: str,
+        scopes: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """
+        Generate a new API key with Kalshi creating the key pair.
+
+        Per Kalshi API: Kalshi generates both public and private keys. The private
+        key is returned ONCE and never stored. Save it immediately.
+
+        WARNING: The private_key is returned only once. Store it securely!
+
+        Args:
+            name: Descriptive name for the key
+            scopes: List of permission scopes (e.g., ["read", "write"]).
+                   If 'write' is included, 'read' must also be included.
+                   Defaults to full access (['read', 'write']) if not provided.
+
+        Returns:
+            Dict with:
+            - api_key_id: The key ID (use in KALSHI-ACCESS-KEY header)
+            - private_key: RSA private key in PEM format (SAVE THIS!)
+
+        Example:
+            # Generate key with default full access
+            result = await client.generate_api_key(
+                name="Auto-Generated Bot Key"
+            )
+
+            # CRITICAL: Save private key immediately!
+            with open("private_key.pem", "w") as f:
+                f.write(result['private_key'])
+
+            print(f"API Key ID: {result['api_key_id']}")
+            print("⚠️  Private key saved to private_key.pem - keep secure!")
+        """
+        if not name:
+            raise ValueError("name cannot be empty")
+
+        json_data = {"name": name}
+
+        # Only include scopes if provided (API defaults to ['read', 'write'])
+        if scopes is not None:
+            json_data["scopes"] = scopes
+
+        return await self._make_authenticated_request(
+            "POST",
+            "/trade-api/v2/api_keys/generate",
+            json_data=json_data
+        )
+
+    async def delete_api_key(self, api_key_id: str) -> Dict[str, Any]:
+        """
+        Delete an API key, immediately revoking access.
+
+        Per Kalshi API: Permanently removes the key. Any requests using this
+        key will fail with 401 Unauthorized.
+
+        Args:
+            api_key_id: The API key ID to delete
+
+        Returns:
+            Empty dict on success
+
+        Example:
+            await client.delete_api_key("your-api-key-id")
+            print("API key revoked successfully")
+        """
+        if not api_key_id:
+            raise ValueError("api_key_id cannot be empty")
+
+        return await self._make_authenticated_request(
+            "DELETE",
+            f"/trade-api/v2/api_keys/{api_key_id}"
+        )
+
+    # ============================================================================
+    # SEARCH & DISCOVERY (API Part 4)
+    # ============================================================================
+
+    async def get_tags_by_categories(self) -> Dict[str, Any]:
+        """
+        Get all tags grouped by series categories.
+
+        Per Kalshi API: Returns hierarchical tag structure for filtering markets
+        by topic categories (e.g., Politics, Economics, Sports).
+
+        Returns:
+            Dict with:
+            - tags_by_categories: Mapping of series categories to their associated tags
+
+        Example:
+            result = await client.get_tags_by_categories()
+            for category, tags in result['tags_by_categories'].items():
+                print(f"{category}: {', '.join(tags)}")
+        """
+        return await self._make_authenticated_request(
+            "GET",
+            "/trade-api/v2/search/tags_by_categories",
+            require_auth=False
+        )
+
+    async def get_filters_by_sport(self) -> Dict[str, Any]:
+        """
+        Get sport-specific filter options.
+
+        Per Kalshi API: Returns available filters organized by sport, including
+        scopes and competitions, plus ordered list of sports for display.
+
+        Returns:
+            Dict with:
+            - filters_by_sports: Mapping of sports to their filter details
+            - sport_ordering: Ordered list of sports for display
+
+        Example:
+            result = await client.get_filters_by_sport()
+            for sport in result['sport_ordering']:
+                filters = result['filters_by_sports'].get(sport, {})
+                print(f"{sport}: {filters}")
+        """
+        return await self._make_authenticated_request(
+            "GET",
+            "/trade-api/v2/search/filters_by_sport",
+            require_auth=False
         )
 
     # ============================================================================

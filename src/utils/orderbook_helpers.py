@@ -146,8 +146,8 @@ class OrderbookAnalyzer:
         Returns:
             Dict with yes_liquidity and no_liquidity (total contracts)
         """
-        yes_liquidity = sum(qty for _, qty in self.yes_bids)
-        no_liquidity = sum(qty for _, qty in self.no_bids)
+        yes_liquidity = sum(qty for _, qty in self.yes_bids) if self.yes_bids else 0
+        no_liquidity = sum(qty for _, qty in self.no_bids) if self.no_bids else 0
 
         return {
             'yes_liquidity': yes_liquidity,
