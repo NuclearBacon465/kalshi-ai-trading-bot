@@ -74,6 +74,9 @@ class KalshiWebSocketClient:
         # Message queue for processing
         self.message_queue = asyncio.Queue()
 
+        # Message ID tracking for WebSocket commands (per Quick Start docs)
+        self._message_id = 1
+
     async def connect(self):
         """
         Connect to Kalshi WebSocket with authentication.
@@ -197,13 +200,15 @@ class KalshiWebSocketClient:
             return False
 
         try:
+            # Per Kalshi Quick Start docs: include "id" field for message tracking
             message = {
-                "type": "subscribe",
-                "channel": "ticker",
+                "id": self._message_id,
+                "cmd": "subscribe",
                 "params": {
                     "market_tickers": [ticker]
                 }
             }
+            self._message_id += 1
 
             await self.websocket.send(json.dumps(message))
             self.subscribed_tickers.add(ticker)
@@ -223,10 +228,15 @@ class KalshiWebSocketClient:
             return False
 
         try:
+            # Per Kalshi Quick Start docs: include "id" field for message tracking
             message = {
-                "type": "subscribe",
-                "channel": "fill"
+                "id": self._message_id,
+                "cmd": "subscribe",
+                "params": {
+                    "channels": ["fill"]
+                }
             }
+            self._message_id += 1
 
             await self.websocket.send(json.dumps(message))
             self.logger.info("🔔 Subscribed to fill notifications")
@@ -245,13 +255,15 @@ class KalshiWebSocketClient:
             return False
 
         try:
+            # Per Kalshi Quick Start docs: include "id" field for message tracking
             message = {
-                "type": "subscribe",
-                "channel": "orderbook_delta",
+                "id": self._message_id,
+                "cmd": "subscribe",
                 "params": {
                     "market_ticker": ticker
                 }
             }
+            self._message_id += 1
 
             await self.websocket.send(json.dumps(message))
             self.logger.info(f"📖 Subscribed to orderbook: {ticker}")
@@ -259,6 +271,184 @@ class KalshiWebSocketClient:
 
         except Exception as e:
             self.logger.error(f"Failed to subscribe to orderbook {ticker}: {e}")
+            return False
+
+    async def subscribe_market_positions(self, tickers: Optional[list] = None):
+        """
+        Subscribe to real-time position updates (authenticated).
+        Get instant updates when positions change due to trades, settlements, etc.
+
+        Args:
+            tickers: Optional list of market tickers to filter. Omit for all positions.
+        """
+        if not self.is_connected:
+            return False
+
+        try:
+            message = {
+                "id": self._message_id,
+                "cmd": "subscribe",
+                "params": {
+                    "channels": ["market_positions"]
+                }
+            }
+            self._message_id += 1
+
+            if tickers:
+                message["params"]["market_tickers"] = tickers
+
+            await self.websocket.send(json.dumps(message))
+            self.logger.info("💼 Subscribed to market positions")
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Failed to subscribe to market positions: {e}")
+            return False
+
+    async def subscribe_market_lifecycle(self, tickers: Optional[list] = None):
+        """
+        Subscribe to market state changes and event creation.
+        Tracks: created, activated, deactivated, close_date_updated, determined, settled
+
+        Args:
+            tickers: Optional list of market tickers to filter. Omit for all markets.
+        """
+        if not self.is_connected:
+            return False
+
+        try:
+            message = {
+                "id": self._message_id,
+                "cmd": "subscribe",
+                "params": {
+                    "channels": ["market_lifecycle_v2"]
+                }
+            }
+            self._message_id += 1
+
+            if tickers:
+                message["params"]["market_tickers"] = tickers
+
+            await self.websocket.send(json.dumps(message))
+            self.logger.info("🔄 Subscribed to market lifecycle")
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Failed to subscribe to market lifecycle: {e}")
+            return False
+
+    async def subscribe_communications(self):
+        """
+        Subscribe to RFQ and quote notifications (authenticated).
+        Get updates on RFQs you create and quotes on your RFQs.
+        """
+        if not self.is_connected:
+            return False
+
+        try:
+            message = {
+                "id": self._message_id,
+                "cmd": "subscribe",
+                "params": {
+                    "channels": ["communications"]
+                }
+            }
+            self._message_id += 1
+
+            await self.websocket.send(json.dumps(message))
+            self.logger.info("💬 Subscribed to communications (RFQ/quotes)")
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Failed to subscribe to communications: {e}")
+            return False
+
+    async def subscribe_public_trades(self, tickers: Optional[list] = None):
+        """
+        Subscribe to public trade notifications.
+
+        Args:
+            tickers: Optional list of market tickers to filter. Omit for all trades.
+        """
+        if not self.is_connected:
+            return False
+
+        try:
+            message = {
+                "id": self._message_id,
+                "cmd": "subscribe",
+                "params": {
+                    "channels": ["trade"]
+                }
+            }
+            self._message_id += 1
+
+            if tickers:
+                message["params"]["market_tickers"] = tickers
+
+            await self.websocket.send(json.dumps(message))
+            self.logger.info("📈 Subscribed to public trades")
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Failed to subscribe to public trades: {e}")
+            return False
+
+    async def list_subscriptions(self):
+        """
+        List all active WebSocket subscriptions.
+        Useful for debugging and verifying subscriptions.
+        """
+        if not self.is_connected:
+            self.logger.warning("Cannot list subscriptions: WebSocket not connected")
+            return False
+
+        try:
+            message = {
+                "id": self._message_id,
+                "cmd": "list_subscriptions"
+            }
+            self._message_id += 1
+
+            await self.websocket.send(json.dumps(message))
+            self.logger.info("📋 Requested subscription list")
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Failed to list subscriptions: {e}")
+            return False
+
+    async def unsubscribe(self, channels: list, tickers: Optional[list] = None):
+        """
+        Unsubscribe from one or more channels.
+
+        Args:
+            channels: List of channel names to unsubscribe from
+            tickers: Optional list of market tickers to remove
+        """
+        if not self.is_connected:
+            self.logger.warning("Cannot unsubscribe: WebSocket not connected")
+            return False
+
+        try:
+            message = {
+                "id": self._message_id,
+                "cmd": "unsubscribe",
+                "params": {
+                    "channels": channels
+                }
+            }
+            self._message_id += 1
+
+            if tickers:
+                message["params"]["market_tickers"] = tickers
+
+            await self.websocket.send(json.dumps(message))
+            self.logger.info(f"🚫 Unsubscribed from: {', '.join(channels)}")
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Failed to unsubscribe: {e}")
             return False
 
     async def _resubscribe_all(self):
@@ -525,7 +715,16 @@ class KalshiWebSocketClient:
             channel = message.get('channel')
 
             if msg_type == 'error':
-                self.logger.error(f"WebSocket error: {message.get('message')}")
+                # Per Kalshi Quick Start docs, error format is:
+                # {"id": 123, "type": "error", "msg": {"code": 6, "msg": "Params required"}}
+                msg_id = message.get('id', 'unknown')
+                error_data = message.get('msg', {})
+                error_code = error_data.get('code', 'unknown')
+                error_msg = error_data.get('msg', str(message))
+                self.logger.error(
+                    f"WebSocket error [ID:{msg_id}] Code {error_code}: {error_msg}",
+                    extra={"ws_error_code": error_code, "ws_message_id": msg_id}
+                )
                 return
 
             if msg_type == 'subscribed':

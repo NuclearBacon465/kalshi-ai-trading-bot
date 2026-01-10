@@ -34,12 +34,23 @@ class KalshiClient(TradingLoggerMixin):
     """
     Kalshi API client for automated trading.
     Handles authentication, market data retrieval, and trade execution.
+
+    Rate Limits (per Kalshi Reference docs):
+    - Basic tier: 20 read/sec, 10 write/sec (default on signup)
+    - Advanced tier: 30 read/sec, 30 write/sec (via typeform)
+    - Premier tier: 100 read/sec, 100 write/sec (3.75% volume + technical review)
+    - Prime tier: 400 read/sec, 400 write/sec (7.5% volume + technical review)
+
+    Write-limited endpoints:
+    - CreateOrder, CancelOrder, AmendOrder, DecreaseOrder
+    - BatchCreateOrders (each order = 1 transaction)
+    - BatchCancelOrders (each cancel = 0.2 transactions)
     """
-    
+
     _rate_semaphore = asyncio.Semaphore(5)
     _rate_lock = asyncio.Lock()
     _last_request_ts = 0.0
-    _min_request_interval = 0.35
+    _min_request_interval = 0.35  # ~2.86 req/sec (conservative for Basic tier)
 
     def __init__(
         self, 
@@ -52,12 +63,17 @@ class KalshiClient(TradingLoggerMixin):
     ):
         """
         Initialize Kalshi client.
-        
+
         Args:
             api_key: Kalshi API key (Key ID from the API key generation)
-            private_key_path: Path to private key file
+            private_key_path: Path to private key file (SECURITY: Store securely, never expose)
             max_retries: Maximum number of retries for failed requests
             backoff_factor: Factor for exponential backoff
+
+        Note:
+            Per Kalshi Quick Start docs: Despite the 'elections' subdomain,
+            api.elections.kalshi.com provides access to ALL Kalshi markets
+            (economics, climate, technology, entertainment, etc.)
         """
         self.api_key = api_key or settings.api.kalshi_api_key
         self.base_url = settings.api.kalshi_base_url
@@ -67,7 +83,7 @@ class KalshiClient(TradingLoggerMixin):
         self.private_key = None
         self.max_retries = max_retries
         self.backoff_factor = backoff_factor
-        
+
         # Load private key lazily on first authenticated request
         
         # HTTP client with timeouts
@@ -164,17 +180,22 @@ class KalshiClient(TradingLoggerMixin):
     def _sign_request(self, timestamp: str, method: str, path: str) -> str:
         """
         Sign request using RSA PSS signing method as per Kalshi API docs.
-        
+
         Args:
             timestamp: Request timestamp in milliseconds
             method: HTTP method
-            path: Request path
-        
+            path: Request path (query parameters will be stripped automatically)
+
         Returns:
             Base64 encoded signature
         """
+        # CRITICAL: Strip query parameters before signing (per Kalshi Quick Start docs)
+        # "Important: Use the path without query parameters. For /portfolio/orders?limit=5,
+        # sign only /trade-api/v2/portfolio/orders"
+        path_without_query = path.split('?')[0]
+
         # Create message to sign: timestamp + method + path
-        message = timestamp + method.upper() + path
+        message = timestamp + method.upper() + path_without_query
         message_bytes = message.encode('utf-8')
         
         try:
@@ -267,7 +288,9 @@ class KalshiClient(TradingLoggerMixin):
                     headers=headers,
                     content=body if body else None
                 )
-                
+
+                # Per Kalshi Quick Start: raise_for_status() handles all 2xx codes including
+                # 201 (order creation success) and 200 (general success)
                 response.raise_for_status()
                 return response.json()
                 
@@ -309,12 +332,40 @@ class KalshiClient(TradingLoggerMixin):
         return await self._make_authenticated_request("GET", "/trade-api/v2/portfolio/positions", params=params)
     
     async def get_fills(self, ticker: Optional[str] = None, limit: int = 100) -> Dict[str, Any]:
-        """Get order fills.""" 
+        """Get order fills."""
         params = {"limit": limit}
         if ticker:
             params["ticker"] = ticker
         return await self._make_authenticated_request("GET", "/trade-api/v2/portfolio/fills", params=params)
-    
+
+    async def get_settlements(
+        self,
+        limit: int = 100,
+        cursor: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Get settled positions.
+
+        IMPORTANT: As of Dec 11, 2025, get_positions() only returns UNSETTLED positions.
+        Use this endpoint to get settled positions.
+
+        Args:
+            limit: Number of settlements to return
+            cursor: Pagination cursor
+
+        Returns:
+            Settlements data with event_ticker, fees_paid, etc.
+        """
+        params = {"limit": limit}
+        if cursor:
+            params["cursor"] = cursor
+
+        return await self._make_authenticated_request(
+            "GET",
+            "/trade-api/v2/portfolio/settlements",
+            params=params
+        )
+
     async def get_orders(self, ticker: Optional[str] = None, status: Optional[str] = None) -> Dict[str, Any]:
         """Get orders."""
         params = {}
@@ -369,7 +420,80 @@ class KalshiClient(TradingLoggerMixin):
         return await self._make_authenticated_request(
             "GET", f"/trade-api/v2/markets/{ticker}", require_auth=False
         )
-    
+
+    async def get_events(
+        self,
+        series_ticker: Optional[str] = None,
+        status: Optional[str] = None,
+        limit: int = 200,
+        cursor: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Get events.
+
+        IMPORTANT: As of Nov 6, 2025, this endpoint EXCLUDES multivariate events.
+        Use get_multivariate_events() for combo markets.
+
+        Args:
+            series_ticker: Filter by series
+            status: Filter by status
+            limit: Number of events to return (default 200, was 100)
+            cursor: Pagination cursor
+
+        Returns:
+            Events data
+        """
+        params = {"limit": limit}
+        if series_ticker:
+            params["series_ticker"] = series_ticker
+        if status:
+            params["status"] = status
+        if cursor:
+            params["cursor"] = cursor
+
+        return await self._make_authenticated_request(
+            "GET",
+            "/trade-api/v2/events",
+            params=params,
+            require_auth=False
+        )
+
+    async def get_multivariate_events(
+        self,
+        series_ticker: Optional[str] = None,
+        collection_ticker: Optional[str] = None,
+        limit: int = 200,
+        cursor: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Get multivariate events (combo markets).
+
+        Added Nov 6, 2025. These are excluded from get_events().
+
+        Args:
+            series_ticker: Filter by series
+            collection_ticker: Filter by collection
+            limit: Number of events to return
+            cursor: Pagination cursor
+
+        Returns:
+            Multivariate events data
+        """
+        params = {"limit": limit}
+        if series_ticker:
+            params["series_ticker"] = series_ticker
+        if collection_ticker:
+            params["collection_ticker"] = collection_ticker
+        if cursor:
+            params["cursor"] = cursor
+
+        return await self._make_authenticated_request(
+            "GET",
+            "/trade-api/v2/events/multivariate",
+            params=params,
+            require_auth=False
+        )
+
     async def get_orderbook(self, ticker: str, depth: int = 100) -> Dict[str, Any]:
         """
         Get market orderbook.
@@ -429,20 +553,22 @@ class KalshiClient(TradingLoggerMixin):
     ) -> Dict[str, Any]:
         """
         Place a trading order.
-        
+
         Args:
             ticker: Market ticker
-            client_order_id: Unique client order ID
+            client_order_id: Unique client order ID (CRITICAL for deduplication -
+                           per Kalshi Quick Start: prevents accidental double orders
+                           on network issues. Use UUID4 for uniqueness)
             side: "yes" or "no"
             action: "buy" or "sell"
             count: Number of contracts
             type_: Order type ("market" or "limit")
-            yes_price: Yes price in cents (for limit orders)
-            no_price: No price in cents (for limit orders)
+            yes_price: Yes price in cents (1-99, per Kalshi Quick Start)
+            no_price: No price in cents (1-99, per Kalshi Quick Start)
             expiration_ts: Order expiration timestamp
-        
+
         Returns:
-            Order response
+            Order response (HTTP 201 on success per Kalshi Quick Start)
         """
         order_data = {
             "ticker": ticker,
@@ -735,6 +861,527 @@ class KalshiClient(TradingLoggerMixin):
                 break
 
         return orders
+
+    # ============================================================================
+    # BATCH OPERATIONS (Added per Kalshi API docs - Nov 14, 2025)
+    # ============================================================================
+
+    async def batch_create_orders(self, orders: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Create multiple orders in a single request.
+
+        Per Kalshi API: Available to all users as of Nov 14, 2025.
+        Rate limit friendly - counts as single request.
+
+        Args:
+            orders: List of order dictionaries, each with:
+                - ticker: str
+                - client_order_id: str
+                - side: "yes" or "no"
+                - action: "buy" or "sell"
+                - count: int
+                - type: "market" or "limit"
+                - yes_price/no_price: Optional[int]
+                - expiration_ts: Optional[int]
+
+        Returns:
+            Response with created orders and any errors
+
+        Example:
+            orders = [
+                {"ticker": "MARKET1", "client_order_id": "id1", "side": "yes",
+                 "action": "buy", "count": 10, "type": "market"},
+                {"ticker": "MARKET2", "client_order_id": "id2", "side": "no",
+                 "action": "buy", "count": 5, "type": "market"}
+            ]
+            result = await client.batch_create_orders(orders)
+        """
+        return await self._make_authenticated_request(
+            "POST",
+            "/trade-api/v2/portfolio/orders/batched",
+            json_data={"orders": orders}
+        )
+
+    async def batch_cancel_orders(self, order_ids: List[str]) -> Dict[str, Any]:
+        """
+        Cancel multiple orders in a single request.
+
+        Per Kalshi API: Available to all users as of Dec 1, 2025.
+        Much more efficient than canceling one by one.
+
+        Args:
+            order_ids: List of order IDs to cancel
+
+        Returns:
+            Response with cancellation results
+
+        Example:
+            result = await client.batch_cancel_orders([
+                "order-id-1",
+                "order-id-2",
+                "order-id-3"
+            ])
+        """
+        return await self._make_authenticated_request(
+            "DELETE",
+            "/trade-api/v2/portfolio/orders/batched",
+            json_data={"ids": order_ids}
+        )
+
+    # ============================================================================
+    # ORDER AMENDMENTS (Added per Kalshi API docs)
+    # ============================================================================
+
+    async def amend_order(
+        self,
+        order_id: str,
+        new_price: Optional[int] = None,
+        new_count: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """
+        Amend an existing order's price and/or quantity.
+
+        More efficient than cancel+replace, maintains queue position priority.
+
+        Args:
+            order_id: Order ID to amend
+            new_price: New price in cents (1-99)
+            new_count: New quantity
+
+        Returns:
+            Amended order
+
+        Note: Can only amend resting limit orders. Cannot amend filled/canceled orders.
+        """
+        amend_data = {}
+        if new_price is not None:
+            amend_data["price"] = new_price
+        if new_count is not None:
+            amend_data["count"] = new_count
+
+        return await self._make_authenticated_request(
+            "POST",
+            f"/trade-api/v2/portfolio/orders/{order_id}/amend",
+            json_data=amend_data
+        )
+
+    async def decrease_order(self, order_id: str, reduce_by: int) -> Dict[str, Any]:
+        """
+        Decrease an order's quantity.
+
+        Maintains better queue position than cancel+replace with lower quantity.
+
+        Args:
+            order_id: Order ID to decrease
+            reduce_by: Amount to reduce quantity by
+
+        Returns:
+            Updated order
+
+        Example:
+            # Order currently has count=10, reduce by 3 → new count=7
+            await client.decrease_order("order-123", reduce_by=3)
+        """
+        return await self._make_authenticated_request(
+            "POST",
+            f"/trade-api/v2/portfolio/orders/{order_id}/decrease",
+            json_data={"reduce_by": reduce_by}
+        )
+
+    # ============================================================================
+    # SERIES OPERATIONS (Added per Kalshi API docs)
+    # ============================================================================
+
+    async def get_series(
+        self,
+        limit: int = 100,
+        cursor: Optional[str] = None,
+        tags: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """
+        List all series (market categories).
+
+        Per Kalshi API: Series group related markets together.
+
+        Args:
+            limit: Maximum number of series to return
+            cursor: Pagination cursor
+            tags: Filter by tags (e.g., ["Politics", "Sports"])
+
+        Returns:
+            Series list
+
+        Example:
+            series = await client.get_series(tags=["Politics"])
+        """
+        params = {"limit": limit}
+        if cursor:
+            params["cursor"] = cursor
+        if tags:
+            # Per Oct 13, 2025 fix: tags are comma-separated, not space-separated
+            params["tags"] = ",".join(tags)
+
+        return await self._make_authenticated_request(
+            "GET",
+            "/trade-api/v2/series",
+            params=params,
+            require_auth=False
+        )
+
+    async def get_series_info(
+        self,
+        series_ticker: str,
+        include_volume: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Get detailed information about a specific series.
+
+        Args:
+            series_ticker: Series ticker (e.g., "PRES")
+            include_volume: Include total volume across all events (Jan 6, 2026+)
+
+        Returns:
+            Series details including markets
+        """
+        params = {}
+        if include_volume:
+            params["include_volume"] = "true"
+
+        return await self._make_authenticated_request(
+            "GET",
+            f"/trade-api/v2/series/{series_ticker}",
+            params=params,
+            require_auth=False
+        )
+
+    async def get_series_fee_changes(
+        self,
+        series_ticker: Optional[str] = None,
+        show_historical: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Get scheduled fee changes for series.
+
+        Per Kalshi API: Added Sept 21, 2025.
+        Useful for anticipating fee structure changes.
+
+        Args:
+            series_ticker: Filter to specific series
+            show_historical: Include past fee changes (default: only future)
+
+        Returns:
+            Fee change schedule
+
+        Example:
+            # Get upcoming fee changes for all series
+            changes = await client.get_series_fee_changes()
+
+            # Get all fee changes (past and future) for PRES series
+            pres_changes = await client.get_series_fee_changes(
+                series_ticker="PRES",
+                show_historical=True
+            )
+        """
+        params = {}
+        if series_ticker:
+            params["series_ticker"] = series_ticker
+        if show_historical:
+            params["show_historical"] = "true"
+
+        return await self._make_authenticated_request(
+            "GET",
+            "/trade-api/v2/series/fee_changes",
+            params=params,
+            require_auth=False
+        )
+
+    # ============================================================================
+    # ORDER QUEUE POSITIONS (Added per Kalshi API docs - Aug 1, 2025)
+    # ============================================================================
+
+    async def get_queue_positions(
+        self,
+        market_tickers: Optional[List[str]] = None,
+        event_ticker: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Get queue positions for multiple resting limit orders.
+
+        Shows where your orders are in the queue (important for fill priority).
+
+        Args:
+            market_tickers: Filter by market tickers
+            event_ticker: Filter by event
+
+        Returns:
+            Queue positions for your orders
+
+        Note: Must specify either market_tickers OR event_ticker.
+        """
+        params = {}
+        if market_tickers:
+            params["market_tickers"] = ",".join(market_tickers)
+        if event_ticker:
+            params["event_ticker"] = event_ticker
+
+        return await self._make_authenticated_request(
+            "GET",
+            "/trade-api/v2/portfolio/orders/queue_positions",
+            params=params
+        )
+
+    async def get_order_queue_position(self, order_id: str) -> Dict[str, Any]:
+        """
+        Get queue position for a specific resting order.
+
+        Args:
+            order_id: Order ID to check
+
+        Returns:
+            Queue position and details
+        """
+        return await self._make_authenticated_request(
+            "GET",
+            f"/trade-api/v2/portfolio/orders/{order_id}/queue_position"
+        )
+
+    # ============================================================================
+    # EXCHANGE STATUS (Added per Kalshi API docs)
+    # ============================================================================
+
+    async def get_exchange_status(self) -> Dict[str, Any]:
+        """
+        Get current exchange operational status.
+
+        Per Kalshi API docs: Check if exchange and trading are active.
+
+        Returns:
+            Dict with:
+            - exchange_active (bool): False during maintenance
+            - trading_active (bool): True during trading hours
+            - exchange_estimated_resume_time (str|None): Estimated downtime end
+
+        Example:
+            status = await client.get_exchange_status()
+            if status['trading_active']:
+                print("Trading is open!")
+        """
+        return await self._make_authenticated_request(
+            "GET",
+            "/trade-api/v2/exchange/status",
+            require_auth=False
+        )
+
+    async def get_exchange_announcements(self) -> Dict[str, Any]:
+        """
+        Get all exchange-wide announcements.
+
+        Per Kalshi API docs: Returns announcements array with type, message,
+        delivery_time, and status fields.
+
+        Returns:
+            Dict with announcements array
+
+        Example:
+            result = await client.get_exchange_announcements()
+            for announcement in result['announcements']:
+                print(f"{announcement['type']}: {announcement['message']}")
+        """
+        return await self._make_authenticated_request(
+            "GET",
+            "/trade-api/v2/exchange/announcements",
+            require_auth=False
+        )
+
+    async def get_exchange_schedule(self) -> Dict[str, Any]:
+        """
+        Get exchange trading schedule.
+
+        Per Kalshi API docs: Returns standard_hours (daily schedule) and
+        maintenance_windows (planned downtime).
+
+        Returns:
+            Dict with schedule object containing:
+            - standard_hours: Daily trading hours by weekday
+            - maintenance_windows: Scheduled maintenance periods
+
+        Example:
+            schedule = await client.get_exchange_schedule()
+            print(f"Maintenance windows: {schedule['schedule']['maintenance_windows']}")
+        """
+        return await self._make_authenticated_request(
+            "GET",
+            "/trade-api/v2/exchange/schedule",
+            require_auth=False
+        )
+
+    async def get_user_data_timestamp(self) -> Dict[str, Any]:
+        """
+        Get timestamp when user data was last validated.
+
+        Per Kalshi API docs: "There is typically a short delay before exchange
+        events are reflected in the API endpoints. Whenever possible, combine API
+        responses to PUT/POST/DELETE requests with websocket data to obtain the
+        most accurate view of the exchange state."
+
+        This endpoint shows when data from GetBalance, GetOrders, GetFills,
+        and GetPositions was last updated.
+
+        Returns:
+            Dict with:
+            - as_of_time (str): ISO 8601 timestamp of last data validation
+
+        Example:
+            result = await client.get_user_data_timestamp()
+            print(f"Data freshness: {result['as_of_time']}")
+        """
+        return await self._make_authenticated_request(
+            "GET",
+            "/trade-api/v2/exchange/user_data_timestamp",
+            require_auth=True  # This requires auth (user-specific data)
+        )
+
+    # ========================================================================
+    # Pagination Helpers (per Kalshi Reference: Understanding Pagination)
+    # ========================================================================
+
+    async def get_all_markets(
+        self,
+        event_ticker: Optional[str] = None,
+        series_ticker: Optional[str] = None,
+        status: Optional[str] = None,
+        max_items: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Auto-paginate through all markets.
+
+        Per Kalshi Reference docs: "cursor-based pagination to efficiently navigate
+        through large datasets."
+
+        Args:
+            event_ticker: Filter by event ticker
+            series_ticker: Filter by series ticker
+            status: Filter by market status
+            max_items: Maximum total items to fetch (None = unlimited)
+
+        Returns:
+            List of all markets
+
+        Example:
+            # Get all open markets for a series
+            markets = await client.get_all_markets(
+                series_ticker="KXHIGHNY",
+                status="open"
+            )
+        """
+        all_markets = []
+        cursor = None
+        page_count = 0
+
+        while True:
+            page_count += 1
+            result = await self.get_markets(
+                limit=100,
+                cursor=cursor,
+                event_ticker=event_ticker,
+                series_ticker=series_ticker,
+                status=status
+            )
+
+            markets = result.get('markets', [])
+            all_markets.extend(markets)
+
+            self.logger.debug(
+                f"Pagination: Fetched page {page_count}, "
+                f"{len(markets)} markets, total: {len(all_markets)}"
+            )
+
+            # Check stopping conditions
+            if max_items and len(all_markets) >= max_items:
+                return all_markets[:max_items]
+
+            cursor = result.get('cursor')
+            if not cursor:
+                break
+
+        return all_markets
+
+    async def get_all_events(
+        self,
+        series_ticker: Optional[str] = None,
+        status: Optional[str] = None,
+        max_items: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Auto-paginate through all events.
+
+        Args:
+            series_ticker: Filter by series ticker
+            status: Filter by status
+            max_items: Maximum total items to fetch (None = unlimited)
+
+        Returns:
+            List of all events
+        """
+        all_events = []
+        cursor = None
+
+        while True:
+            result = await self.get_events(
+                series_ticker=series_ticker,
+                status=status,
+                limit=200,
+                cursor=cursor
+            )
+
+            events = result.get('events', [])
+            all_events.extend(events)
+
+            if max_items and len(all_events) >= max_items:
+                return all_events[:max_items]
+
+            cursor = result.get('cursor')
+            if not cursor:
+                break
+
+        return all_events
+
+    async def get_all_series(
+        self,
+        tags: Optional[List[str]] = None,
+        max_items: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Auto-paginate through all series.
+
+        Args:
+            tags: Filter by tags
+            max_items: Maximum total items to fetch (None = unlimited)
+
+        Returns:
+            List of all series
+        """
+        all_series = []
+        cursor = None
+
+        while True:
+            result = await self.get_series(
+                limit=100,
+                cursor=cursor,
+                tags=tags
+            )
+
+            series = result.get('series', [])
+            all_series.extend(series)
+
+            if max_items and len(all_series) >= max_items:
+                return all_series[:max_items]
+
+            cursor = result.get('cursor')
+            if not cursor:
+                break
+
+        return all_series
 
     async def close(self) -> None:
         """Close the HTTP client."""
