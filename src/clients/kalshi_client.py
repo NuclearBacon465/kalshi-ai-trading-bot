@@ -266,21 +266,118 @@ class KalshiClient(TradingLoggerMixin):
         raise KalshiAPIError(f"API request failed after {self.max_retries} retries: {last_exception}")
     
     async def get_balance(self) -> Dict[str, Any]:
-        """Get account balance."""
+        """
+        Get account balance.
+
+        Per Kalshi API: Returns current balance in cents. Does not include
+        value tied up in resting orders (use get_total_resting_order_value for that).
+
+        Returns:
+            Dict with:
+            - balance: Available balance in cents
+
+        Example:
+            result = await client.get_balance()
+            balance_dollars = result['balance'] / 100
+            print(f"Available balance: ${balance_dollars:.2f}")
+        """
         return await self._make_authenticated_request("GET", "/trade-api/v2/portfolio/balance")
     
-    async def get_positions(self, ticker: Optional[str] = None) -> Dict[str, Any]:
-        """Get portfolio positions."""
-        params = {}
-        if ticker:
-            params["ticker"] = ticker
-        return await self._make_authenticated_request("GET", "/trade-api/v2/portfolio/positions", params=params)
-    
-    async def get_fills(self, ticker: Optional[str] = None, limit: int = 100) -> Dict[str, Any]:
-        """Get order fills."""
+    async def get_positions(
+        self,
+        ticker: Optional[str] = None,
+        event_ticker: Optional[str] = None,
+        settlement_status: Optional[str] = None,
+        limit: int = 100,
+        cursor: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Get portfolio positions.
+
+        Per Kalshi API: Returns current positions (both market-level and
+        event-level aggregated positions). As of Dec 11, 2025, only returns
+        UNSETTLED positions. Use get_settlements() for settled positions.
+
+        Args:
+            ticker: Filter by market ticker
+            event_ticker: Filter by event ticker
+            settlement_status: Filter by settlement status (unsettled, settled)
+            limit: Number of results per page (default 100, max 200)
+            cursor: Pagination cursor
+
+        Returns:
+            Dict with:
+            - market_positions: Array of position objects
+            - cursor: Pagination cursor for next page
+
+        Example:
+            # Get all positions
+            result = await client.get_positions()
+            for pos in result.get('market_positions', []):
+                print(f"{pos['ticker']}: {pos['position']} contracts")
+
+            # Get positions for specific market
+            result = await client.get_positions(ticker="KXHIGHNY-24JAN01-T60")
+        """
         params = {"limit": limit}
         if ticker:
             params["ticker"] = ticker
+        if event_ticker:
+            params["event_ticker"] = event_ticker
+        if settlement_status:
+            params["settlement_status"] = settlement_status
+        if cursor:
+            params["cursor"] = cursor
+        return await self._make_authenticated_request("GET", "/trade-api/v2/portfolio/positions", params=params)
+    
+    async def get_fills(
+        self,
+        ticker: Optional[str] = None,
+        order_id: Optional[str] = None,
+        min_ts: Optional[int] = None,
+        max_ts: Optional[int] = None,
+        limit: int = 100,
+        cursor: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Get order fills (executed trades).
+
+        Per Kalshi API: Returns fill history with execution prices, quantities,
+        fees, and timestamps.
+
+        Args:
+            ticker: Filter by market ticker
+            order_id: Filter by specific order ID
+            min_ts: Filter fills after this Unix timestamp
+            max_ts: Filter fills before this Unix timestamp
+            limit: Number of results per page (default 100, max 200)
+            cursor: Pagination cursor
+
+        Returns:
+            Dict with:
+            - fills: Array of fill objects with trade details
+            - cursor: Pagination cursor for next page
+
+        Example:
+            # Get recent fills
+            result = await client.get_fills(limit=10)
+            for fill in result['fills']:
+                print(f"{fill['ticker']}: {fill['count']} @ {fill['yes_price']}¢")
+
+            # Get fills for specific market
+            result = await client.get_fills(ticker="KXHIGHNY-24JAN01-T60")
+        """
+        params = {"limit": limit}
+        if ticker:
+            params["ticker"] = ticker
+        if order_id:
+            params["order_id"] = order_id
+        if min_ts:
+            params["min_ts"] = min_ts
+        if max_ts:
+            params["max_ts"] = max_ts
+        if cursor:
+            params["cursor"] = cursor
         return await self._make_authenticated_request("GET", "/trade-api/v2/portfolio/fills", params=params)
 
     async def get_settlements(
@@ -309,6 +406,27 @@ class KalshiClient(TradingLoggerMixin):
             "GET",
             "/trade-api/v2/portfolio/settlements",
             params=params
+        )
+
+    async def get_total_resting_order_value(self) -> Dict[str, Any]:
+        """
+        Get total value of all resting orders across all markets.
+
+        Per Kalshi API: Returns the total value committed in resting (open) orders.
+        Useful for understanding capital allocation and available buying power.
+
+        Returns:
+            Dict with:
+            - total_resting_order_value: Total value in cents
+
+        Example:
+            result = await client.get_total_resting_order_value()
+            value_dollars = result['total_resting_order_value'] / 100
+            print(f"Capital in open orders: ${value_dollars:.2f}")
+        """
+        return await self._make_authenticated_request(
+            "GET",
+            "/trade-api/v2/portfolio/total_resting_order_value"
         )
 
     async def get_orders(
@@ -1227,6 +1345,215 @@ class KalshiClient(TradingLoggerMixin):
             "PUT",
             f"/trade-api/v2/portfolio/order_groups/{order_group_id}/reset",
             json_data={}
+        )
+
+    # ============================================================================
+    # API KEYS MANAGEMENT (API Part 4)
+    # ============================================================================
+
+    async def get_api_keys(self) -> Dict[str, Any]:
+        """
+        Get all API keys for the authenticated user.
+
+        Per Kalshi API: Returns list of API keys with their IDs, names, scopes,
+        and creation timestamps. Does NOT return the private keys (security).
+
+        Returns:
+            Dict with api_keys array containing:
+            - api_key_id: Unique key identifier
+            - name: User-provided key name
+            - scopes: List of permission scopes
+            - created_at: Creation timestamp
+
+        Example:
+            result = await client.get_api_keys()
+            for key in result['api_keys']:
+                print(f"Key: {key['name']} (ID: {key['api_key_id']})")
+                print(f"  Scopes: {', '.join(key['scopes'])}")
+        """
+        return await self._make_authenticated_request(
+            "GET",
+            "/trade-api/v2/api_keys"
+        )
+
+    async def create_api_key(
+        self,
+        name: str,
+        public_key: str,
+        scopes: List[str]
+    ) -> Dict[str, Any]:
+        """
+        Create a new API key using your own RSA public key.
+
+        Per Kalshi API: You provide your own RSA public key pair. Kalshi stores
+        the public key and you keep the private key secure for signing requests.
+
+        Args:
+            name: Descriptive name for the key (e.g., "Trading Bot Production")
+            public_key: Your RSA public key in PEM format
+            scopes: List of permission scopes (e.g., ["read", "trade"])
+
+        Returns:
+            Dict with:
+            - api_key_id: The created key's ID (use in KALSHI-ACCESS-KEY header)
+
+        Example:
+            # Generate RSA key pair first
+            from cryptography.hazmat.primitives.asymmetric import rsa
+            from cryptography.hazmat.primitives import serialization
+
+            private_key = rsa.generate_private_key(
+                public_exponent=65537,
+                key_size=2048
+            )
+            public_key_pem = private_key.public_key().public_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PublicFormat.SubjectPublicKeyInfo
+            ).decode()
+
+            # Create API key
+            result = await client.create_api_key(
+                name="My Trading Bot",
+                public_key=public_key_pem,
+                scopes=["read", "trade"]
+            )
+            print(f"API Key ID: {result['api_key_id']}")
+        """
+        if not name:
+            raise ValueError("name cannot be empty")
+        if not public_key:
+            raise ValueError("public_key cannot be empty")
+        if not scopes or len(scopes) == 0:
+            raise ValueError("scopes must contain at least one scope")
+
+        return await self._make_authenticated_request(
+            "POST",
+            "/trade-api/v2/api_keys",
+            json_data={
+                "name": name,
+                "public_key": public_key,
+                "scopes": scopes
+            }
+        )
+
+    async def generate_api_key(
+        self,
+        name: str,
+        scopes: List[str]
+    ) -> Dict[str, Any]:
+        """
+        Generate a new API key with Kalshi creating the key pair.
+
+        Per Kalshi API: Kalshi generates both public and private keys. The private
+        key is returned ONCE and never stored. Save it immediately.
+
+        WARNING: The private_key is returned only once. Store it securely!
+
+        Args:
+            name: Descriptive name for the key
+            scopes: List of permission scopes (e.g., ["read", "trade"])
+
+        Returns:
+            Dict with:
+            - api_key_id: The key ID (use in KALSHI-ACCESS-KEY header)
+            - private_key: RSA private key in PEM format (SAVE THIS!)
+            - public_key: RSA public key in PEM format
+
+        Example:
+            result = await client.generate_api_key(
+                name="Auto-Generated Bot Key",
+                scopes=["read", "trade"]
+            )
+
+            # CRITICAL: Save private key immediately!
+            with open("private_key.pem", "w") as f:
+                f.write(result['private_key'])
+
+            print(f"API Key ID: {result['api_key_id']}")
+            print("⚠️  Private key saved to private_key.pem - keep secure!")
+        """
+        if not name:
+            raise ValueError("name cannot be empty")
+        if not scopes or len(scopes) == 0:
+            raise ValueError("scopes must contain at least one scope")
+
+        return await self._make_authenticated_request(
+            "POST",
+            "/trade-api/v2/api_keys/generate",
+            json_data={
+                "name": name,
+                "scopes": scopes
+            }
+        )
+
+    async def delete_api_key(self, api_key_id: str) -> Dict[str, Any]:
+        """
+        Delete an API key, immediately revoking access.
+
+        Per Kalshi API: Permanently removes the key. Any requests using this
+        key will fail with 401 Unauthorized.
+
+        Args:
+            api_key_id: The API key ID to delete
+
+        Returns:
+            Empty dict on success
+
+        Example:
+            await client.delete_api_key("your-api-key-id")
+            print("API key revoked successfully")
+        """
+        if not api_key_id:
+            raise ValueError("api_key_id cannot be empty")
+
+        return await self._make_authenticated_request(
+            "DELETE",
+            f"/trade-api/v2/api_keys/{api_key_id}"
+        )
+
+    # ============================================================================
+    # SEARCH & DISCOVERY (API Part 4)
+    # ============================================================================
+
+    async def get_tags_by_categories(self) -> Dict[str, Any]:
+        """
+        Get all tags grouped by series categories.
+
+        Per Kalshi API: Returns hierarchical tag structure for filtering markets
+        by topic categories (e.g., Politics, Economics, Sports).
+
+        Returns:
+            Dict with category-to-tags mapping
+
+        Example:
+            result = await client.get_tags_by_categories()
+            for category, tags in result.items():
+                print(f"{category}: {', '.join(tags)}")
+        """
+        return await self._make_authenticated_request(
+            "GET",
+            "/trade-api/v2/tags/series_categories",
+            require_auth=False
+        )
+
+    async def get_filters_by_sport(self) -> Dict[str, Any]:
+        """
+        Get sport-specific filter options.
+
+        Per Kalshi API: Returns available filters for sports markets
+        (leagues, teams, players, etc.).
+
+        Returns:
+            Dict with sport filter structure
+
+        Example:
+            result = await client.get_filters_by_sport()
+            # Use to build sport-specific market queries
+        """
+        return await self._make_authenticated_request(
+            "GET",
+            "/trade-api/v2/filters/sports",
+            require_auth=False
         )
 
     # ============================================================================
