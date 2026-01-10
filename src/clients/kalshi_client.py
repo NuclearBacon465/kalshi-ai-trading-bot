@@ -311,14 +311,84 @@ class KalshiClient(TradingLoggerMixin):
             params=params
         )
 
-    async def get_orders(self, ticker: Optional[str] = None, status: Optional[str] = None) -> Dict[str, Any]:
-        """Get orders."""
-        params = {}
+    async def get_orders(
+        self,
+        ticker: Optional[str] = None,
+        event_ticker: Optional[str] = None,
+        min_ts: Optional[int] = None,
+        max_ts: Optional[int] = None,
+        status: Optional[str] = None,
+        limit: int = 100,
+        cursor: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Get orders with filtering and pagination.
+
+        Per Kalshi API: Returns orders array with pagination support.
+        Restricts to orders with status: resting, canceled, or executed.
+
+        Args:
+            ticker: Filter by market ticker
+            event_ticker: Filter by event ticker (comma-separated list, max 10)
+            min_ts: Filter items after this Unix timestamp
+            max_ts: Filter items before this Unix timestamp
+            status: Filter by status (resting, canceled, executed)
+            limit: Number of results per page (default 100, max 200)
+            cursor: Pagination cursor from previous response
+
+        Returns:
+            Dict with:
+            - orders: Array of order objects
+            - cursor: Pagination cursor for next page
+
+        Example:
+            # Get all resting orders
+            result = await client.get_orders(status="resting", limit=50)
+            for order in result['orders']:
+                print(f"Order {order['order_id']}: {order['ticker']}")
+        """
+        params = {"limit": min(limit, 200)}  # Enforce max limit
+
         if ticker:
             params["ticker"] = ticker
+        if event_ticker:
+            params["event_ticker"] = event_ticker
+        if min_ts:
+            params["min_ts"] = min_ts
+        if max_ts:
+            params["max_ts"] = max_ts
         if status:
             params["status"] = status
-        return await self._make_authenticated_request("GET", "/trade-api/v2/portfolio/orders", params=params)
+        if cursor:
+            params["cursor"] = cursor
+
+        return await self._make_authenticated_request(
+            "GET",
+            "/trade-api/v2/portfolio/orders",
+            params=params
+        )
+
+    async def get_order(self, order_id: str) -> Dict[str, Any]:
+        """
+        Get a single order by ID.
+
+        Per Kalshi API: Endpoint for getting a single order.
+
+        Args:
+            order_id: Order ID to retrieve
+
+        Returns:
+            Dict with order object containing all order fields
+
+        Example:
+            order = await client.get_order("order-uuid-123")
+            print(f"Status: {order['order']['status']}")
+            print(f"Fill count: {order['order']['fill_count']}")
+        """
+        return await self._make_authenticated_request(
+            "GET",
+            f"/trade-api/v2/portfolio/orders/{order_id}"
+        )
     
     async def get_markets(
         self,
@@ -880,29 +950,90 @@ class KalshiClient(TradingLoggerMixin):
     async def amend_order(
         self,
         order_id: str,
-        new_price: Optional[int] = None,
-        new_count: Optional[int] = None
+        ticker: str,
+        side: str,
+        action: str,
+        client_order_id: str,
+        updated_client_order_id: str,
+        yes_price: Optional[int] = None,
+        no_price: Optional[int] = None,
+        yes_price_dollars: Optional[str] = None,
+        no_price_dollars: Optional[str] = None,
+        count: Optional[int] = None
     ) -> Dict[str, Any]:
         """
         Amend an existing order's price and/or quantity.
 
-        More efficient than cancel+replace, maintains queue position priority.
+        Per Kalshi API: Endpoint for amending the max number of fillable contracts
+        and/or price in an existing order. Max fillable contracts is
+        remaining_count + fill_count.
+
+        More efficient than cancel+replace, maintains better queue position priority.
 
         Args:
             order_id: Order ID to amend
-            new_price: New price in cents (1-99)
-            new_count: New quantity
+            ticker: Market ticker (required)
+            side: "yes" or "no" (required)
+            action: "buy" or "sell" (required)
+            client_order_id: Original client-specified order ID (required)
+            updated_client_order_id: New client-specified order ID (required)
+            yes_price: Updated yes price in cents (1-99)
+            no_price: Updated no price in cents (1-99)
+            yes_price_dollars: Updated yes price in fixed-point dollars
+            no_price_dollars: Updated no price in fixed-point dollars
+            count: Updated quantity (max fillable contracts)
 
         Returns:
-            Amended order
+            Dict with:
+            - old_order: The order before amendment
+            - order: The order after amendment
 
-        Note: Can only amend resting limit orders. Cannot amend filled/canceled orders.
+        Note:
+            - Exactly one of yes_price, no_price, yes_price_dollars, no_price_dollars
+              must be provided
+            - Can only amend resting limit orders
+
+        Example:
+            result = await client.amend_order(
+                order_id="order-123",
+                ticker="MARKET-TICKER",
+                side="yes",
+                action="buy",
+                client_order_id="original-id",
+                updated_client_order_id="new-id",
+                yes_price=55,
+                count=15
+            )
+            print(f"Old price: {result['old_order']['yes_price']}")
+            print(f"New price: {result['order']['yes_price']}")
         """
-        amend_data = {}
-        if new_price is not None:
-            amend_data["price"] = new_price
-        if new_count is not None:
-            amend_data["count"] = new_count
+        amend_data = {
+            "ticker": ticker,
+            "side": side,
+            "action": action,
+            "client_order_id": client_order_id,
+            "updated_client_order_id": updated_client_order_id
+        }
+
+        # Exactly one price field must be provided (per API docs)
+        price_fields = [yes_price, no_price, yes_price_dollars, no_price_dollars]
+        if sum(x is not None for x in price_fields) != 1:
+            raise ValueError(
+                "Exactly one of yes_price, no_price, yes_price_dollars, "
+                "or no_price_dollars must be provided"
+            )
+
+        if yes_price is not None:
+            amend_data["yes_price"] = yes_price
+        if no_price is not None:
+            amend_data["no_price"] = no_price
+        if yes_price_dollars is not None:
+            amend_data["yes_price_dollars"] = yes_price_dollars
+        if no_price_dollars is not None:
+            amend_data["no_price_dollars"] = no_price_dollars
+
+        if count is not None:
+            amend_data["count"] = count
 
         return await self._make_authenticated_request(
             "POST",
@@ -910,27 +1041,59 @@ class KalshiClient(TradingLoggerMixin):
             json_data=amend_data
         )
 
-    async def decrease_order(self, order_id: str, reduce_by: int) -> Dict[str, Any]:
+    async def decrease_order(
+        self,
+        order_id: str,
+        reduce_by: Optional[int] = None,
+        reduce_to: Optional[int] = None
+    ) -> Dict[str, Any]:
         """
-        Decrease an order's quantity.
+        Decrease the number of contracts in an existing order.
+
+        Per Kalshi API: This is the only kind of edit available on order quantity.
+        Cancelling an order is equivalent to decreasing an order amount to zero.
 
         Maintains better queue position than cancel+replace with lower quantity.
 
         Args:
             order_id: Order ID to decrease
-            reduce_by: Amount to reduce quantity by
+            reduce_by: Amount to reduce quantity by (must be >= 1)
+            reduce_to: Target quantity to reduce to (must be >= 0)
 
         Returns:
-            Updated order
+            Dict with updated order object
 
-        Example:
-            # Order currently has count=10, reduce by 3 → new count=7
+        Note:
+            Exactly one of reduce_by or reduce_to must be provided.
+
+        Examples:
+            # Reduce by 3 contracts (if currently 10 → becomes 7)
             await client.decrease_order("order-123", reduce_by=3)
+
+            # Reduce to exactly 5 contracts
+            await client.decrease_order("order-123", reduce_to=5)
+
+            # Cancel order completely (reduce to 0)
+            await client.decrease_order("order-123", reduce_to=0)
         """
+        if (reduce_by is None and reduce_to is None) or \
+           (reduce_by is not None and reduce_to is not None):
+            raise ValueError("Exactly one of reduce_by or reduce_to must be provided")
+
+        decrease_data = {}
+        if reduce_by is not None:
+            if reduce_by < 1:
+                raise ValueError("reduce_by must be >= 1")
+            decrease_data["reduce_by"] = reduce_by
+        if reduce_to is not None:
+            if reduce_to < 0:
+                raise ValueError("reduce_to must be >= 0")
+            decrease_data["reduce_to"] = reduce_to
+
         return await self._make_authenticated_request(
             "POST",
             f"/trade-api/v2/portfolio/orders/{order_id}/decrease",
-            json_data={"reduce_by": reduce_by}
+            json_data=decrease_data
         )
 
     # ============================================================================
