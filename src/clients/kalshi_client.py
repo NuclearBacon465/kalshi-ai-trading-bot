@@ -2544,6 +2544,386 @@ class KalshiClient(TradingLoggerMixin):
 
         return all_series
 
+    # ============================================================================
+    # INCENTIVE PROGRAMS (API Part 6)
+    # ============================================================================
+
+    async def get_incentive_programs(
+        self,
+        status: Optional[str] = None,
+        incentive_type: Optional[str] = None,
+        limit: int = 100,
+        cursor: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        List incentive programs (rewards for trading activity).
+
+        Per Kalshi API: Incentives are rewards programs for trading activity
+        on specific markets.
+
+        Args:
+            status: Filter by status (all, active, upcoming, closed, paid_out)
+                   Default: all
+            incentive_type: Filter by type (all, liquidity, volume)
+                          Default: all
+            limit: Number of results per page (1-10000, default 100)
+            cursor: Pagination cursor
+
+        Returns:
+            Dict with:
+            - incentive_programs: Array of incentive objects with:
+                - id: Program identifier
+                - market_ticker: Associated market
+                - incentive_type: Type (liquidity/volume)
+                - start_date, end_date: Program duration
+                - period_reward: Reward amount
+                - paid_out: Whether rewards have been distributed
+                - discount_factor_bps: Discount factor in basis points
+                - target_size: Target size for program
+            - next_cursor: Pagination cursor
+
+        Example:
+            # Get active liquidity incentive programs
+            programs = await client.get_incentive_programs(
+                status="active",
+                incentive_type="liquidity"
+            )
+        """
+        params = {}
+        if status:
+            params["status"] = status
+        if incentive_type:
+            params["type"] = incentive_type
+        if limit:
+            params["limit"] = limit
+        if cursor:
+            params["cursor"] = cursor
+
+        return await self._make_authenticated_request(
+            "GET",
+            "/trade-api/v2/incentive_programs",
+            params=params,
+            require_auth=False
+        )
+
+    # ============================================================================
+    # FCM ENDPOINTS (API Part 6) - FCM Members Only
+    # ============================================================================
+
+    async def get_fcm_orders(
+        self,
+        subtrader_id: str,
+        cursor: Optional[str] = None,
+        event_ticker: Optional[str] = None,
+        ticker: Optional[str] = None,
+        min_ts: Optional[int] = None,
+        max_ts: Optional[int] = None,
+        status: Optional[str] = None,
+        limit: int = 100
+    ) -> Dict[str, Any]:
+        """
+        Get orders filtered by subtrader ID (FCM members only).
+
+        Per Kalshi API: Requires FCM member access level.
+
+        Args:
+            subtrader_id: Specific subtrader ID (required for FCM members)
+            cursor: Pagination cursor
+            event_ticker: Filter by event ticker (comma-separated, max 10)
+            ticker: Filter by market ticker
+            min_ts: Filter orders after this Unix timestamp
+            max_ts: Filter orders before this Unix timestamp
+            status: Filter by status (resting, canceled, executed)
+            limit: Number of results per page (1-1000, default 100)
+
+        Returns:
+            Dict with:
+            - orders: Array of order objects
+            - cursor: Pagination cursor
+
+        Example:
+            # Get orders for a subtrader
+            orders = await client.get_fcm_orders(
+                subtrader_id="subtrader-123",
+                status="resting"
+            )
+
+        Note:
+            This endpoint is only available to FCM members.
+        """
+        params = {"subtrader_id": subtrader_id}
+        if cursor:
+            params["cursor"] = cursor
+        if event_ticker:
+            params["event_ticker"] = event_ticker
+        if ticker:
+            params["ticker"] = ticker
+        if min_ts:
+            params["min_ts"] = min_ts
+        if max_ts:
+            params["max_ts"] = max_ts
+        if status:
+            params["status"] = status
+        if limit:
+            params["limit"] = limit
+
+        return await self._make_authenticated_request(
+            "GET",
+            "/trade-api/v2/fcm/orders",
+            params=params,
+            require_auth=True
+        )
+
+    async def get_fcm_positions(
+        self,
+        subtrader_id: str,
+        ticker: Optional[str] = None,
+        event_ticker: Optional[str] = None,
+        count_filter: Optional[str] = None,
+        settlement_status: Optional[str] = None,
+        limit: int = 100,
+        cursor: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Get positions filtered by subtrader ID (FCM members only).
+
+        Per Kalshi API: Requires FCM member access level.
+
+        Args:
+            subtrader_id: Specific subtrader ID (required for FCM members)
+            ticker: Filter by market ticker
+            event_ticker: Filter by event ticker
+            count_filter: Restrict to positions with non-zero values (comma-separated)
+            settlement_status: Filter by settlement status (all, unsettled, settled)
+                             Default: unsettled
+            limit: Number of results per page (1-1000, default 100)
+            cursor: Pagination cursor
+
+        Returns:
+            Dict with:
+            - market_positions: Array of market-level positions
+            - event_positions: Array of event-level positions
+            - cursor: Pagination cursor
+
+        Example:
+            # Get positions for a subtrader
+            positions = await client.get_fcm_positions(
+                subtrader_id="subtrader-123",
+                settlement_status="unsettled"
+            )
+
+        Note:
+            This endpoint is only available to FCM members.
+        """
+        params = {"subtrader_id": subtrader_id}
+        if ticker:
+            params["ticker"] = ticker
+        if event_ticker:
+            params["event_ticker"] = event_ticker
+        if count_filter:
+            params["count_filter"] = count_filter
+        if settlement_status:
+            params["settlement_status"] = settlement_status
+        if limit:
+            params["limit"] = limit
+        if cursor:
+            params["cursor"] = cursor
+
+        return await self._make_authenticated_request(
+            "GET",
+            "/trade-api/v2/fcm/positions",
+            params=params,
+            require_auth=True
+        )
+
+    # ============================================================================
+    # STRUCTURED TARGETS (API Part 6)
+    # ============================================================================
+
+    async def get_structured_targets(
+        self,
+        target_type: Optional[str] = None,
+        competition: Optional[str] = None,
+        page_size: int = 100,
+        cursor: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        List structured targets with filtering.
+
+        Per Kalshi API: Structured targets represent structured data for events.
+
+        Args:
+            target_type: Filter by structured target type
+            competition: Filter by competition
+            page_size: Number of items per page (1-2000, default 100)
+            cursor: Pagination cursor
+
+        Returns:
+            Dict with:
+            - structured_targets: Array of structured target objects with:
+                - id: Target identifier
+                - name: Target name
+                - type: Target type
+                - details: Type-specific details object
+                - source_id: Source identifier
+                - last_updated_ts: Last update timestamp
+            - cursor: Pagination cursor
+
+        Example:
+            # Get structured targets for a competition
+            targets = await client.get_structured_targets(
+                competition="NFL",
+                page_size=50
+            )
+        """
+        params = {"page_size": page_size}
+        if target_type:
+            params["type"] = target_type
+        if competition:
+            params["competition"] = competition
+        if cursor:
+            params["cursor"] = cursor
+
+        return await self._make_authenticated_request(
+            "GET",
+            "/trade-api/v2/structured_targets",
+            params=params,
+            require_auth=False
+        )
+
+    async def get_structured_target(
+        self,
+        structured_target_id: str
+    ) -> Dict[str, Any]:
+        """
+        Get a specific structured target by ID.
+
+        Per Kalshi API: Returns detailed information about a structured target.
+
+        Args:
+            structured_target_id: Structured target ID
+
+        Returns:
+            Dict with:
+            - structured_target: Structured target object
+
+        Example:
+            target = await client.get_structured_target("target-123")
+            print(f"Target: {target['structured_target']['name']}")
+        """
+        return await self._make_authenticated_request(
+            "GET",
+            f"/trade-api/v2/structured_targets/{structured_target_id}",
+            require_auth=False
+        )
+
+    # ============================================================================
+    # MILESTONES (API Part 6)
+    # ============================================================================
+
+    async def get_milestone(
+        self,
+        milestone_id: str
+    ) -> Dict[str, Any]:
+        """
+        Get a specific milestone by ID.
+
+        Per Kalshi API: Returns detailed information about a milestone.
+
+        Args:
+            milestone_id: Milestone ID
+
+        Returns:
+            Dict with:
+            - milestone: Milestone object with:
+                - id: Milestone identifier
+                - category: Milestone category
+                - type: Milestone type
+                - start_date: Start date (RFC3339)
+                - end_date: End date (RFC3339, nullable)
+                - related_event_tickers: Array of related event tickers
+                - primary_event_tickers: Array of primary event tickers
+                - title: Milestone title
+                - notification_message: Notification message
+                - details: Type-specific details object
+                - source_id: Source identifier
+                - last_updated_ts: Last update timestamp
+
+        Example:
+            milestone = await client.get_milestone("milestone-123")
+            print(f"Milestone: {milestone['milestone']['title']}")
+        """
+        return await self._make_authenticated_request(
+            "GET",
+            f"/trade-api/v2/milestones/{milestone_id}",
+            require_auth=False
+        )
+
+    async def get_milestones(
+        self,
+        limit: int,
+        minimum_start_date: Optional[str] = None,
+        category: Optional[str] = None,
+        competition: Optional[str] = None,
+        source_id: Optional[str] = None,
+        milestone_type: Optional[str] = None,
+        related_event_ticker: Optional[str] = None,
+        cursor: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        List milestones with filtering and pagination.
+
+        Per Kalshi API: Milestones represent significant events or dates.
+
+        Args:
+            limit: Number of results per page (1-500, required)
+            minimum_start_date: Minimum start date filter (RFC3339 timestamp)
+            category: Filter by milestone category
+            competition: Filter by competition
+            source_id: Filter by source ID
+            milestone_type: Filter by milestone type
+            related_event_ticker: Filter by related event ticker
+            cursor: Pagination cursor
+
+        Returns:
+            Dict with:
+            - milestones: Array of milestone objects
+            - cursor: Pagination cursor
+
+        Example:
+            # Get upcoming election milestones
+            milestones = await client.get_milestones(
+                limit=50,
+                category="election",
+                minimum_start_date="2024-01-01T00:00:00Z"
+            )
+        """
+        if not 1 <= limit <= 500:
+            raise ValueError("limit must be between 1 and 500")
+
+        params = {"limit": limit}
+        if minimum_start_date:
+            params["minimum_start_date"] = minimum_start_date
+        if category:
+            params["category"] = category
+        if competition:
+            params["competition"] = competition
+        if source_id:
+            params["source_id"] = source_id
+        if milestone_type:
+            params["type"] = milestone_type
+        if related_event_ticker:
+            params["related_event_ticker"] = related_event_ticker
+        if cursor:
+            params["cursor"] = cursor
+
+        return await self._make_authenticated_request(
+            "GET",
+            "/trade-api/v2/milestones",
+            params=params,
+            require_auth=False
+        )
+
     async def close(self) -> None:
         """Close the HTTP client."""
         await self.client.aclose()
