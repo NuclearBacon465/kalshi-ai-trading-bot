@@ -104,8 +104,9 @@ async def execute_position_enhanced(
                 market_id=position.market_id,
                 side=position.side,
                 quantity=0,
-                entry_price=0,
-                rationale=f"SKIPPED: {decision.reasoning}"
+                price=0,
+                confidence=0.0,
+                edge=0.0
             )
 
             return False
@@ -162,18 +163,17 @@ async def execute_position_enhanced(
             # Notify success
             notifier.notify_order_filled(
                 order_id=str(uuid.uuid4()),
-                ticker=position.market_id,
-                side=position.side,
-                quantity=result.filled_quantity,
-                price=result.average_fill_price
+                market_id=position.market_id,
+                fill_price=result.average_fill_price
             )
 
             notifier.notify_trade_opened(
                 market_id=position.market_id,
                 side=position.side,
                 quantity=result.filled_quantity,
-                entry_price=result.average_fill_price,
-                rationale=f"Phase 4 Execution: {result.method_used}"
+                price=result.average_fill_price,
+                confidence=position.confidence,
+                edge=getattr(position, 'edge', 0.05)
             )
 
             # 🧠 STEP 7: Log execution statistics
