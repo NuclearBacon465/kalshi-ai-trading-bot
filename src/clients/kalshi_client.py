@@ -3252,6 +3252,219 @@ class KalshiClient(TradingLoggerMixin):
         )
 
     # ============================================================================
+    # MULTIVARIATE EVENT COLLECTIONS (API Part 8 - FINAL)
+    # ============================================================================
+    # Multivariate Event Collections (MVE) allow creating combo markets based on
+    # combinations of events (e.g., "What will happen in BOTH event A AND event B?")
+
+    async def get_multivariate_event_collections(
+        self,
+        status: Optional[str] = None,
+        associated_event_ticker: Optional[str] = None,
+        series_ticker: Optional[str] = None,
+        limit: Optional[int] = None,
+        cursor: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Get list of multivariate event collections.
+
+        Args:
+            status: Filter by status ("unopened", "open", "closed")
+            associated_event_ticker: Filter by associated event ticker
+            series_ticker: Filter by series ticker
+            limit: Maximum number of results (1-200)
+            cursor: Pagination cursor
+
+        Returns:
+            Dict with:
+            - multivariate_contracts: Array of collection objects
+            - cursor: Pagination cursor for next page
+
+        Example:
+            collections = await client.get_multivariate_event_collections(
+                status="open",
+                limit=50
+            )
+            for coll in collections['multivariate_contracts']:
+                print(f"{coll['title']}: {len(coll['associated_events'])} events")
+        """
+        params = {}
+        if status:
+            params["status"] = status
+        if associated_event_ticker:
+            params["associated_event_ticker"] = associated_event_ticker
+        if series_ticker:
+            params["series_ticker"] = series_ticker
+        if limit:
+            params["limit"] = limit
+        if cursor:
+            params["cursor"] = cursor
+
+        return await self._make_authenticated_request(
+            "GET",
+            "/trade-api/v2/multivariate_event_collections",
+            params=params,
+            require_auth=False
+        )
+
+    async def get_multivariate_event_collection(
+        self,
+        collection_ticker: str
+    ) -> Dict[str, Any]:
+        """
+        Get a single multivariate event collection by ticker.
+
+        Args:
+            collection_ticker: Collection ticker
+
+        Returns:
+            Dict with:
+            - multivariate_contract: Collection object with full details
+              - associated_events: List of events in the collection
+              - is_ordered: Whether order matters
+              - is_single_market_per_event: One market per event
+              - is_all_yes: All YES sides only
+              - size_min/max: Contract size limits
+
+        Example:
+            collection = await client.get_multivariate_event_collection("MVE-ELECTION-FED")
+            print(f"Events: {collection['multivariate_contract']['associated_event_tickers']}")
+        """
+        return await self._make_authenticated_request(
+            "GET",
+            f"/trade-api/v2/multivariate_event_collections/{collection_ticker}",
+            require_auth=False
+        )
+
+    async def create_market_in_multivariate_collection(
+        self,
+        collection_ticker: str,
+        selected_markets: list,
+        with_market_payload: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Create an individual market in a multivariate event collection.
+
+        This endpoint must be called at least once before trading or looking up a market.
+
+        Args:
+            collection_ticker: Collection ticker
+            selected_markets: List of selected markets with structure:
+                [{"market_ticker": "...", "event_ticker": "...", "side": "yes"}]
+            with_market_payload: Include full market data in response
+
+        Returns:
+            Dict with:
+            - event_ticker: Event ticker for created market
+            - market_ticker: Market ticker for created market
+            - market: Full market object (if with_market_payload=True)
+
+        Example:
+            market = await client.create_market_in_multivariate_collection(
+                collection_ticker="MVE-ELECTION-FED",
+                selected_markets=[
+                    {"market_ticker": "PRES-DEM", "event_ticker": "PRES", "side": "yes"},
+                    {"market_ticker": "FED-HIKE", "event_ticker": "FED", "side": "yes"}
+                ],
+                with_market_payload=True
+            )
+            print(f"Created: {market['market_ticker']}")
+        """
+        data = {
+            "selected_markets": selected_markets,
+            "with_market_payload": with_market_payload
+        }
+
+        return await self._make_authenticated_request(
+            "POST",
+            f"/trade-api/v2/multivariate_event_collections/{collection_ticker}",
+            json_data=data,
+            require_auth=True
+        )
+
+    async def get_multivariate_collection_lookup_history(
+        self,
+        collection_ticker: str,
+        lookback_seconds: int
+    ) -> Dict[str, Any]:
+        """
+        Get recent lookup history for a multivariate event collection.
+
+        Shows which markets were recently queried.
+
+        Args:
+            collection_ticker: Collection ticker
+            lookback_seconds: Seconds to look back (10, 60, 300, or 3600)
+
+        Returns:
+            Dict with:
+            - lookup_points: Array of recent lookups with:
+              - event_ticker: Event ticker
+              - market_ticker: Market ticker
+              - selected_markets: Markets selected
+              - last_queried_ts: Timestamp of last query
+
+        Example:
+            history = await client.get_multivariate_collection_lookup_history(
+                collection_ticker="MVE-ELECTION-FED",
+                lookback_seconds=300  # Last 5 minutes
+            )
+            for point in history['lookup_points']:
+                print(f"Looked up: {point['market_ticker']}")
+        """
+        if lookback_seconds not in [10, 60, 300, 3600]:
+            raise ValueError("lookback_seconds must be one of: 10, 60, 300, 3600")
+
+        params = {"lookback_seconds": lookback_seconds}
+
+        return await self._make_authenticated_request(
+            "GET",
+            f"/trade-api/v2/multivariate_event_collections/{collection_ticker}/lookup",
+            params=params,
+            require_auth=False
+        )
+
+    async def lookup_market_in_multivariate_collection(
+        self,
+        collection_ticker: str,
+        selected_markets: list
+    ) -> Dict[str, Any]:
+        """
+        Lookup tickers for a market in a multivariate event collection.
+
+        Returns 404 if CreateMarketInMultivariateEventCollection was never
+        called with this combination before.
+
+        Args:
+            collection_ticker: Collection ticker
+            selected_markets: List of selected markets with structure:
+                [{"market_ticker": "...", "event_ticker": "...", "side": "yes"}]
+
+        Returns:
+            Dict with:
+            - event_ticker: Event ticker for the market
+            - market_ticker: Market ticker for the market
+
+        Example:
+            result = await client.lookup_market_in_multivariate_collection(
+                collection_ticker="MVE-ELECTION-FED",
+                selected_markets=[
+                    {"market_ticker": "PRES-DEM", "event_ticker": "PRES", "side": "yes"},
+                    {"market_ticker": "FED-HIKE", "event_ticker": "FED", "side": "no"}
+                ]
+            )
+            print(f"Found: {result['market_ticker']}")
+        """
+        data = {"selected_markets": selected_markets}
+
+        return await self._make_authenticated_request(
+            "PUT",
+            f"/trade-api/v2/multivariate_event_collections/{collection_ticker}/lookup",
+            json_data=data,
+            require_auth=True
+        )
+
+    # ============================================================================
     # UTILITY METHODS
     # ============================================================================
 
