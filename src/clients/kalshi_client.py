@@ -2897,6 +2897,364 @@ class KalshiClient(TradingLoggerMixin):
             require_auth=False
         )
 
+    # ============================================================================
+    # COMMUNICATIONS - RFQs & QUOTES (API Part 7)
+    # ============================================================================
+    # RFQs (Request for Quote) are institutional trading features for requesting
+    # and providing quotes on markets. Max 100 open RFQs at a time.
+
+    async def get_communications_id(self) -> Dict[str, Any]:
+        """
+        Get communications ID for the logged-in user.
+
+        Returns:
+            Dict with:
+            - communications_id: Public ID for identifying user in communications
+
+        Example:
+            comm_id = await client.get_communications_id()
+            print(comm_id['communications_id'])
+        """
+        return await self._make_authenticated_request(
+            "GET",
+            "/trade-api/v2/communications/id",
+            require_auth=True
+        )
+
+    async def get_rfqs(
+        self,
+        limit: int = 100,
+        cursor: Optional[str] = None,
+        event_ticker: Optional[str] = None,
+        market_ticker: Optional[str] = None,
+        status: Optional[str] = None,
+        creator_user_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Get list of RFQs (Request for Quote).
+
+        Args:
+            limit: Number of results per page (1-100, default 100)
+            cursor: Pagination cursor
+            event_ticker: Filter by event ticker (comma-separated, max 10)
+            market_ticker: Filter by market ticker
+            status: Filter by status (e.g., "open")
+            creator_user_id: Filter by creator user ID
+
+        Returns:
+            Dict with:
+            - rfqs: Array of RFQ objects
+            - cursor: Pagination cursor for next page
+
+        Example:
+            rfqs = await client.get_rfqs(status="open", limit=50)
+            for rfq in rfqs['rfqs']:
+                print(f"{rfq['market_ticker']}: {rfq['contracts']} contracts")
+        """
+        params = {"limit": limit}
+        if cursor:
+            params["cursor"] = cursor
+        if event_ticker:
+            params["event_ticker"] = event_ticker
+        if market_ticker:
+            params["market_ticker"] = market_ticker
+        if status:
+            params["status"] = status
+        if creator_user_id:
+            params["creator_user_id"] = creator_user_id
+
+        return await self._make_authenticated_request(
+            "GET",
+            "/trade-api/v2/communications/rfqs",
+            params=params,
+            require_auth=True
+        )
+
+    async def create_rfq(
+        self,
+        market_ticker: str,
+        rest_remainder: bool,
+        contracts: Optional[int] = None,
+        target_cost_centi_cents: Optional[int] = None,
+        replace_existing: bool = False,
+        subtrader_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Create a new RFQ (Request for Quote).
+
+        Max 100 open RFQs at a time.
+
+        Args:
+            market_ticker: Market ticker for the RFQ
+            rest_remainder: Whether to rest remainder after execution
+            contracts: Number of contracts (optional)
+            target_cost_centi_cents: Target cost in centi-cents (optional)
+            replace_existing: Delete existing RFQs as part of creation (default False)
+            subtrader_id: Subtrader ID (FCM members only)
+
+        Returns:
+            Dict with:
+            - id: The ID of the newly created RFQ
+
+        Example:
+            rfq = await client.create_rfq(
+                market_ticker="INXD-24JAN15-B4700",
+                contracts=100,
+                rest_remainder=True,
+                target_cost_centi_cents=5000
+            )
+            print(f"RFQ created: {rfq['id']}")
+        """
+        data = {
+            "market_ticker": market_ticker,
+            "rest_remainder": rest_remainder,
+            "replace_existing": replace_existing
+        }
+        if contracts is not None:
+            data["contracts"] = contracts
+        if target_cost_centi_cents is not None:
+            data["target_cost_centi_cents"] = target_cost_centi_cents
+        if subtrader_id:
+            data["subtrader_id"] = subtrader_id
+
+        return await self._make_authenticated_request(
+            "POST",
+            "/trade-api/v2/communications/rfqs",
+            json_data=data,
+            require_auth=True
+        )
+
+    async def get_rfq(self, rfq_id: str) -> Dict[str, Any]:
+        """
+        Get a single RFQ by ID.
+
+        Args:
+            rfq_id: RFQ ID
+
+        Returns:
+            Dict with:
+            - rfq: RFQ object with full details
+
+        Example:
+            rfq = await client.get_rfq("rfq-abc123")
+            print(f"Status: {rfq['rfq']['status']}")
+        """
+        return await self._make_authenticated_request(
+            "GET",
+            f"/trade-api/v2/communications/rfqs/{rfq_id}",
+            require_auth=True
+        )
+
+    async def delete_rfq(self, rfq_id: str) -> None:
+        """
+        Delete an RFQ by ID.
+
+        Args:
+            rfq_id: RFQ ID to delete
+
+        Example:
+            await client.delete_rfq("rfq-abc123")
+        """
+        await self._make_authenticated_request(
+            "DELETE",
+            f"/trade-api/v2/communications/rfqs/{rfq_id}",
+            require_auth=True
+        )
+
+    async def get_quotes(
+        self,
+        limit: int = 500,
+        cursor: Optional[str] = None,
+        event_ticker: Optional[str] = None,
+        market_ticker: Optional[str] = None,
+        status: Optional[str] = None,
+        quote_creator_user_id: Optional[str] = None,
+        rfq_creator_user_id: Optional[str] = None,
+        rfq_creator_subtrader_id: Optional[str] = None,
+        rfq_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Get list of quotes.
+
+        Args:
+            limit: Number of results per page (1-500, default 500)
+            cursor: Pagination cursor
+            event_ticker: Filter by event ticker (comma-separated, max 10)
+            market_ticker: Filter by market ticker
+            status: Filter by status (e.g., "open", "accepted", "confirmed")
+            quote_creator_user_id: Filter by quote creator user ID
+            rfq_creator_user_id: Filter by RFQ creator user ID
+            rfq_creator_subtrader_id: Filter by RFQ creator subtrader (FCM only)
+            rfq_id: Filter by RFQ ID
+
+        Returns:
+            Dict with:
+            - quotes: Array of quote objects
+            - cursor: Pagination cursor for next page
+
+        Example:
+            quotes = await client.get_quotes(status="open", limit=100)
+            for quote in quotes['quotes']:
+                print(f"{quote['market_ticker']}: YES bid ${quote['yes_bid_dollars']}")
+        """
+        params = {"limit": limit}
+        if cursor:
+            params["cursor"] = cursor
+        if event_ticker:
+            params["event_ticker"] = event_ticker
+        if market_ticker:
+            params["market_ticker"] = market_ticker
+        if status:
+            params["status"] = status
+        if quote_creator_user_id:
+            params["quote_creator_user_id"] = quote_creator_user_id
+        if rfq_creator_user_id:
+            params["rfq_creator_user_id"] = rfq_creator_user_id
+        if rfq_creator_subtrader_id:
+            params["rfq_creator_subtrader_id"] = rfq_creator_subtrader_id
+        if rfq_id:
+            params["rfq_id"] = rfq_id
+
+        return await self._make_authenticated_request(
+            "GET",
+            "/trade-api/v2/communications/quotes",
+            params=params,
+            require_auth=True
+        )
+
+    async def create_quote(
+        self,
+        rfq_id: str,
+        yes_bid: str,
+        no_bid: str,
+        rest_remainder: bool
+    ) -> Dict[str, Any]:
+        """
+        Create a quote in response to an RFQ.
+
+        Args:
+            rfq_id: The RFQ ID to quote on
+            yes_bid: Bid price for YES contracts in dollars (e.g., "0.5600")
+            no_bid: Bid price for NO contracts in dollars (e.g., "0.4400")
+            rest_remainder: Whether to rest remainder after execution
+
+        Returns:
+            Dict with:
+            - id: The ID of the newly created quote
+
+        Example:
+            quote = await client.create_quote(
+                rfq_id="rfq-abc123",
+                yes_bid="0.5600",
+                no_bid="0.4400",
+                rest_remainder=True
+            )
+            print(f"Quote created: {quote['id']}")
+        """
+        data = {
+            "rfq_id": rfq_id,
+            "yes_bid": yes_bid,
+            "no_bid": no_bid,
+            "rest_remainder": rest_remainder
+        }
+
+        return await self._make_authenticated_request(
+            "POST",
+            "/trade-api/v2/communications/quotes",
+            json_data=data,
+            require_auth=True
+        )
+
+    async def get_quote(self, quote_id: str) -> Dict[str, Any]:
+        """
+        Get a single quote by ID.
+
+        Args:
+            quote_id: Quote ID
+
+        Returns:
+            Dict with:
+            - quote: Quote object with full details
+
+        Example:
+            quote = await client.get_quote("quote-xyz789")
+            print(f"Status: {quote['quote']['status']}")
+        """
+        return await self._make_authenticated_request(
+            "GET",
+            f"/trade-api/v2/communications/quotes/{quote_id}",
+            require_auth=True
+        )
+
+    async def delete_quote(self, quote_id: str) -> None:
+        """
+        Delete a quote by ID.
+
+        This prevents the quote from being accepted.
+
+        Args:
+            quote_id: Quote ID to delete
+
+        Example:
+            await client.delete_quote("quote-xyz789")
+        """
+        await self._make_authenticated_request(
+            "DELETE",
+            f"/trade-api/v2/communications/quotes/{quote_id}",
+            require_auth=True
+        )
+
+    async def accept_quote(
+        self,
+        quote_id: str,
+        accepted_side: str
+    ) -> None:
+        """
+        Accept a quote.
+
+        This requires the quoter to confirm before execution.
+
+        Args:
+            quote_id: Quote ID to accept
+            accepted_side: Side to accept ("yes" or "no")
+
+        Example:
+            await client.accept_quote("quote-xyz789", "yes")
+        """
+        data = {
+            "accepted_side": accepted_side
+        }
+
+        await self._make_authenticated_request(
+            "PUT",
+            f"/trade-api/v2/communications/quotes/{quote_id}/accept",
+            json_data=data,
+            require_auth=True
+        )
+
+    async def confirm_quote(self, quote_id: str) -> None:
+        """
+        Confirm an accepted quote.
+
+        This starts a timer for order execution.
+
+        Args:
+            quote_id: Quote ID to confirm
+
+        Example:
+            await client.confirm_quote("quote-xyz789")
+        """
+        await self._make_authenticated_request(
+            "PUT",
+            f"/trade-api/v2/communications/quotes/{quote_id}/confirm",
+            json_data={},
+            require_auth=True
+        )
+
+    # ============================================================================
+    # UTILITY METHODS
+    # ============================================================================
+
     async def close(self) -> None:
         """Close the HTTP client."""
         await self.client.aclose()
