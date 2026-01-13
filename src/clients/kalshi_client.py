@@ -602,36 +602,83 @@ class KalshiClient(TradingLoggerMixin):
         cursor: Optional[str] = None,
         event_ticker: Optional[str] = None,
         series_ticker: Optional[str] = None,
+        min_created_ts: Optional[int] = None,
+        max_created_ts: Optional[int] = None,
+        max_close_ts: Optional[int] = None,
+        min_close_ts: Optional[int] = None,
+        min_settled_ts: Optional[int] = None,
+        max_settled_ts: Optional[int] = None,
         status: Optional[str] = None,
-        tickers: Optional[List[str]] = None
+        tickers: Optional[List[str]] = None,
+        mve_filter: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Get markets data.
-        
+        Get markets data with filtering and pagination.
+
+        Per Kalshi API: Timestamp filters are mutually exclusive:
+        - min/max_created_ts compatible with: unopened, open, empty status
+        - min/max_close_ts compatible with: closed, empty status
+        - min/max_settled_ts compatible with: settled, empty status
+
         Args:
-            limit: Maximum number of markets to return
+            limit: Number of results per page (1-1000, default 100)
             cursor: Pagination cursor
-            event_ticker: Filter by event ticker
+            event_ticker: Filter by event ticker (comma-separated, max 10)
             series_ticker: Filter by series ticker
-            status: Filter by market status
-            tickers: List of specific tickers to fetch
-        
+            min_created_ts: Filter markets created after this Unix timestamp
+            max_created_ts: Filter markets created before this Unix timestamp
+            max_close_ts: Filter markets closing before this Unix timestamp
+            min_close_ts: Filter markets closing after this Unix timestamp
+            min_settled_ts: Filter markets settled after this Unix timestamp
+            max_settled_ts: Filter markets settled before this Unix timestamp
+            status: Filter by status (unopened, open, paused, closed, settled)
+            tickers: List of specific market tickers (comma-separated)
+            mve_filter: Filter multivariate events ('only' or 'exclude')
+
         Returns:
-            Markets data
+            Dict with:
+            - markets: Array of market objects
+            - cursor: Pagination cursor
+
+        Example:
+            # Get open markets
+            markets = await client.get_markets(status="open", limit=50)
+
+            # Get markets closing in next 24h
+            import time
+            tomorrow = int(time.time()) + 86400
+            closing_soon = await client.get_markets(
+                max_close_ts=tomorrow,
+                status="open"
+            )
         """
         params = {"limit": limit}
-        
+
         if cursor:
             params["cursor"] = cursor
         if event_ticker:
             params["event_ticker"] = event_ticker
         if series_ticker:
             params["series_ticker"] = series_ticker
+        if min_created_ts:
+            params["min_created_ts"] = min_created_ts
+        if max_created_ts:
+            params["max_created_ts"] = max_created_ts
+        if max_close_ts:
+            params["max_close_ts"] = max_close_ts
+        if min_close_ts:
+            params["min_close_ts"] = min_close_ts
+        if min_settled_ts:
+            params["min_settled_ts"] = min_settled_ts
+        if max_settled_ts:
+            params["max_settled_ts"] = max_settled_ts
         if status:
             params["status"] = status
         if tickers:
             params["tickers"] = ",".join(tickers)
-        
+        if mve_filter:
+            params["mve_filter"] = mve_filter
+
         return await self._make_authenticated_request(
             "GET", "/trade-api/v2/markets", params=params, require_auth=True
         )
@@ -644,33 +691,55 @@ class KalshiClient(TradingLoggerMixin):
 
     async def get_events(
         self,
-        series_ticker: Optional[str] = None,
-        status: Optional[str] = None,
         limit: int = 200,
-        cursor: Optional[str] = None
+        cursor: Optional[str] = None,
+        with_nested_markets: bool = False,
+        with_milestones: bool = False,
+        status: Optional[str] = None,
+        series_ticker: Optional[str] = None,
+        min_close_ts: Optional[int] = None
     ) -> Dict[str, Any]:
         """
-        Get events.
+        Get events (excludes multivariate events).
 
         IMPORTANT: As of Nov 6, 2025, this endpoint EXCLUDES multivariate events.
         Use get_multivariate_events() for combo markets.
 
         Args:
-            series_ticker: Filter by series
-            status: Filter by status
-            limit: Number of events to return (default 200, was 100)
+            limit: Number of results per page (1-200, default 200)
             cursor: Pagination cursor
+            with_nested_markets: Include markets array within each event (default false)
+            with_milestones: Include related milestones (default false)
+            status: Filter by status (open, closed, settled)
+            series_ticker: Filter by series ticker
+            min_close_ts: Filter events with at least one market closing after this timestamp
 
         Returns:
-            Events data
+            Dict with:
+            - events: Array of event objects
+            - cursor: Pagination cursor
+            - milestones: Array of milestone objects (if with_milestones=true)
+
+        Example:
+            # Get open events with nested markets
+            events = await client.get_events(
+                status="open",
+                with_nested_markets=True
+            )
         """
         params = {"limit": limit}
-        if series_ticker:
-            params["series_ticker"] = series_ticker
-        if status:
-            params["status"] = status
         if cursor:
             params["cursor"] = cursor
+        if with_nested_markets:
+            params["with_nested_markets"] = "true"
+        if with_milestones:
+            params["with_milestones"] = "true"
+        if status:
+            params["status"] = status
+        if series_ticker:
+            params["series_ticker"] = series_ticker
+        if min_close_ts:
+            params["min_close_ts"] = min_close_ts
 
         return await self._make_authenticated_request(
             "GET",
@@ -681,32 +750,46 @@ class KalshiClient(TradingLoggerMixin):
 
     async def get_multivariate_events(
         self,
+        limit: int = 100,
+        cursor: Optional[str] = None,
         series_ticker: Optional[str] = None,
         collection_ticker: Optional[str] = None,
-        limit: int = 200,
-        cursor: Optional[str] = None
+        with_nested_markets: bool = False
     ) -> Dict[str, Any]:
         """
         Get multivariate events (combo markets).
 
-        Added Nov 6, 2025. These are excluded from get_events().
+        Per Kalshi API: Added Nov 6, 2025. These are excluded from get_events().
+        Multivariate events are dynamically created from collections.
 
         Args:
-            series_ticker: Filter by series
-            collection_ticker: Filter by collection
-            limit: Number of events to return
+            limit: Number of results per page (1-200, default 100)
             cursor: Pagination cursor
+            series_ticker: Filter by series ticker
+            collection_ticker: Filter by collection ticker (cannot use with series_ticker)
+            with_nested_markets: Include markets array within each event (default false)
 
         Returns:
-            Multivariate events data
+            Dict with:
+            - events: Array of multivariate event objects
+            - cursor: Pagination cursor
+
+        Example:
+            # Get multivariate events for a collection
+            events = await client.get_multivariate_events(
+                collection_ticker="ELECTION-2024",
+                with_nested_markets=True
+            )
         """
         params = {"limit": limit}
+        if cursor:
+            params["cursor"] = cursor
         if series_ticker:
             params["series_ticker"] = series_ticker
         if collection_ticker:
             params["collection_ticker"] = collection_ticker
-        if cursor:
-            params["cursor"] = cursor
+        if with_nested_markets:
+            params["with_nested_markets"] = "true"
 
         return await self._make_authenticated_request(
             "GET",
@@ -715,16 +798,99 @@ class KalshiClient(TradingLoggerMixin):
             require_auth=False
         )
 
-    async def get_orderbook(self, ticker: str, depth: int = 100) -> Dict[str, Any]:
+    async def get_event(
+        self,
+        event_ticker: str,
+        with_nested_markets: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Get a single event by ticker.
+
+        Per Kalshi API: Returns event details and optionally nested markets.
+
+        Args:
+            event_ticker: Event ticker
+            with_nested_markets: Include markets within event object (default false)
+                               If false, markets returned as separate top-level field
+
+        Returns:
+            Dict with:
+            - event: Event object
+            - markets: Array of market objects (if with_nested_markets=false)
+
+        Example:
+            # Get event with nested markets
+            event_data = await client.get_event(
+                "EVENT-TICKER",
+                with_nested_markets=True
+            )
+        """
+        params = {}
+        if with_nested_markets:
+            params["with_nested_markets"] = "true"
+
+        return await self._make_authenticated_request(
+            "GET",
+            f"/trade-api/v2/events/{event_ticker}",
+            params=params,
+            require_auth=False
+        )
+
+    async def get_event_metadata(self, event_ticker: str) -> Dict[str, Any]:
+        """
+        Get metadata for an event.
+
+        Per Kalshi API: Returns image URLs, settlement sources, and market details.
+
+        Args:
+            event_ticker: Event ticker
+
+        Returns:
+            Dict with:
+            - image_url: Event image path
+            - market_details: Array with market-specific metadata (image_url, color_code)
+            - settlement_sources: Array of {name, url} settlement source objects
+            - featured_image_url: Featured market image path
+            - competition: Event competition (nullable)
+            - competition_scope: Event scope based on competition (nullable)
+
+        Example:
+            metadata = await client.get_event_metadata("EVENT-TICKER")
+            print(f"Image: {metadata['image_url']}")
+            for source in metadata['settlement_sources']:
+                print(f"Source: {source['name']} - {source['url']}")
+        """
+        return await self._make_authenticated_request(
+            "GET",
+            f"/trade-api/v2/events/{event_ticker}/metadata",
+            require_auth=False
+        )
+
+    async def get_orderbook(self, ticker: str, depth: int = 0) -> Dict[str, Any]:
         """
         Get market orderbook.
-        
+
+        Per Kalshi API: Returns yes bids and no bids only (no asks).
+        Binary markets use reciprocal relationship: YES BID at X = NO ASK at (100-X).
+
         Args:
             ticker: Market ticker
-            depth: Orderbook depth
-        
+            depth: Orderbook depth (0 or negative = all levels, 1-100 = specific depth)
+                  Default: 0 (all levels)
+
         Returns:
-            Orderbook data
+            Dict with orderbook containing:
+            - yes: Array of [price, quantity] pairs (bids only)
+            - no: Array of [price, quantity] pairs (bids only)
+            - yes_dollars: Array of [price_str, quantity] with subpenny precision
+            - no_dollars: Array of [price_str, quantity] with subpenny precision
+
+        Example:
+            # Get full orderbook
+            book = await client.get_orderbook("MARKET-TICKER")
+
+            # Get top 10 levels
+            book = await client.get_orderbook("MARKET-TICKER", depth=10)
         """
         params = {"depth": depth}
         return await self._make_authenticated_request(
@@ -759,7 +925,351 @@ class KalshiClient(TradingLoggerMixin):
         return await self._make_authenticated_request(
             "GET", f"/trade-api/v2/markets/{ticker}/history", params=params, require_auth=False
         )
-    
+
+    async def get_market_candlesticks(
+        self,
+        series_ticker: str,
+        ticker: str,
+        start_ts: int,
+        end_ts: int,
+        period_interval: int
+    ) -> Dict[str, Any]:
+        """
+        Get candlestick data for a specific market.
+
+        Per Kalshi API: Returns OHLC data for yes_bid, yes_ask, and price.
+
+        Args:
+            series_ticker: Series containing the market
+            ticker: Market ticker
+            start_ts: Start timestamp (Unix seconds)
+            end_ts: End timestamp (Unix seconds)
+            period_interval: Candlestick period in minutes (1, 60, or 1440)
+
+        Returns:
+            Dict with:
+            - ticker: Market ticker
+            - candlesticks: Array of candlestick objects with:
+                - end_period_ts: Period end timestamp
+                - yes_bid: {open, low, high, close} in cents and dollars
+                - yes_ask: {open, low, high, close} in cents and dollars
+                - price: {open, low, high, close, mean, previous, min, max}
+                - volume: Trading volume
+                - open_interest: Open interest
+
+        Example:
+            # Get hourly candlesticks for last 24h
+            import time
+            end = int(time.time())
+            start = end - 86400
+            candles = await client.get_market_candlesticks(
+                series_ticker="SERIES",
+                ticker="MARKET-TICKER",
+                start_ts=start,
+                end_ts=end,
+                period_interval=60  # 1 hour
+            )
+        """
+        params = {
+            "start_ts": start_ts,
+            "end_ts": end_ts,
+            "period_interval": period_interval
+        }
+
+        return await self._make_authenticated_request(
+            "GET",
+            f"/trade-api/v2/series/{series_ticker}/markets/{ticker}/candlesticks",
+            params=params,
+            require_auth=False
+        )
+
+    async def get_batch_market_candlesticks(
+        self,
+        market_tickers: List[str],
+        start_ts: int,
+        end_ts: int,
+        period_interval: int,
+        include_latest_before_start: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Get candlestick data for multiple markets in a single request.
+
+        Per Kalshi API: Max 100 tickers per request, returns up to 10,000 total candlesticks.
+
+        Args:
+            market_tickers: List of market tickers (max 100)
+            start_ts: Start timestamp (Unix seconds)
+            end_ts: End timestamp (Unix seconds)
+            period_interval: Candlestick period in minutes (>= 1)
+            include_latest_before_start: Prepend synthetic candlestick from before start_ts
+                                        (default false)
+
+        Returns:
+            Dict with:
+            - markets: Array of {market_ticker, candlesticks} objects
+
+        Example:
+            # Get daily candlesticks for multiple markets
+            candles = await client.get_batch_market_candlesticks(
+                market_tickers=["MARKET-1", "MARKET-2", "MARKET-3"],
+                start_ts=start,
+                end_ts=end,
+                period_interval=1440  # 1 day
+            )
+        """
+        if len(market_tickers) > 100:
+            raise ValueError("Maximum 100 market tickers allowed")
+
+        params = {
+            "market_tickers": ",".join(market_tickers),
+            "start_ts": start_ts,
+            "end_ts": end_ts,
+            "period_interval": period_interval
+        }
+        if include_latest_before_start:
+            params["include_latest_before_start"] = "true"
+
+        return await self._make_authenticated_request(
+            "GET",
+            "/trade-api/v2/markets/candlesticks",
+            params=params,
+            require_auth=False
+        )
+
+    async def get_event_candlesticks(
+        self,
+        series_ticker: str,
+        event_ticker: str,
+        start_ts: int,
+        end_ts: int,
+        period_interval: int
+    ) -> Dict[str, Any]:
+        """
+        Get aggregated candlestick data across all markets in an event.
+
+        Per Kalshi API: Returns candlesticks for each market in the event.
+
+        Args:
+            series_ticker: Series containing the event
+            event_ticker: Event ticker
+            start_ts: Start timestamp (Unix seconds)
+            end_ts: End timestamp (Unix seconds)
+            period_interval: Period in minutes (1, 60, or 1440)
+
+        Returns:
+            Dict with:
+            - market_tickers: Array of market tickers in the event
+            - market_candlesticks: Array of candlestick arrays (one per market)
+            - adjusted_end_ts: Adjusted end timestamp if results exceed limit
+
+        Example:
+            candles = await client.get_event_candlesticks(
+                series_ticker="PRES",
+                event_ticker="EVENT-TICKER",
+                start_ts=start,
+                end_ts=end,
+                period_interval=60
+            )
+        """
+        params = {
+            "start_ts": start_ts,
+            "end_ts": end_ts,
+            "period_interval": period_interval
+        }
+
+        return await self._make_authenticated_request(
+            "GET",
+            f"/trade-api/v2/series/{series_ticker}/events/{event_ticker}/candlesticks",
+            params=params,
+            require_auth=False
+        )
+
+    async def get_trades(
+        self,
+        limit: int = 100,
+        cursor: Optional[str] = None,
+        ticker: Optional[str] = None,
+        min_ts: Optional[int] = None,
+        max_ts: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """
+        Get all trades across all markets with filtering.
+
+        Per Kalshi API: Returns completed transactions between users.
+
+        Args:
+            limit: Number of results per page (1-1000, default 100)
+            cursor: Pagination cursor
+            ticker: Filter by market ticker
+            min_ts: Filter trades after this Unix timestamp
+            max_ts: Filter trades before this Unix timestamp
+
+        Returns:
+            Dict with:
+            - trades: Array of trade objects with:
+                - trade_id: Unique trade identifier
+                - ticker: Market ticker
+                - price, count: Trade price and quantity
+                - yes_price, no_price: Prices in cents
+                - yes_price_dollars, no_price_dollars: Prices in dollars
+                - taker_side: Which side was taker (yes/no)
+                - created_time: Trade timestamp
+            - cursor: Pagination cursor
+
+        Example:
+            # Get recent trades for a market
+            trades = await client.get_trades(
+                ticker="MARKET-TICKER",
+                limit=50
+            )
+        """
+        params = {"limit": limit}
+        if cursor:
+            params["cursor"] = cursor
+        if ticker:
+            params["ticker"] = ticker
+        if min_ts:
+            params["min_ts"] = min_ts
+        if max_ts:
+            params["max_ts"] = max_ts
+
+        return await self._make_authenticated_request(
+            "GET",
+            "/trade-api/v2/markets/trades",
+            params=params,
+            require_auth=False
+        )
+
+    async def get_event_forecast_percentile_history(
+        self,
+        series_ticker: str,
+        event_ticker: str,
+        percentiles: List[int],
+        start_ts: int,
+        end_ts: int,
+        period_interval: int
+    ) -> Dict[str, Any]:
+        """
+        Get historical forecast data at specific percentiles for an event.
+
+        Per Kalshi API: Returns raw and formatted forecast numbers over time.
+
+        Args:
+            series_ticker: Series containing the event
+            event_ticker: Event ticker
+            percentiles: Array of percentile values (0-10000, max 10 values)
+            start_ts: Start timestamp (Unix seconds)
+            end_ts: End timestamp (Unix seconds)
+            period_interval: Period in minutes (0=5-second intervals, 1, 60, or 1440)
+
+        Returns:
+            Dict with:
+            - forecast_history: Array of forecast data points with:
+                - event_ticker: Event ticker
+                - end_period_ts: Period end timestamp
+                - period_interval: Period interval in minutes
+                - percentile_points: Array of {percentile, raw_numerical_forecast,
+                                             numerical_forecast, formatted_forecast}
+
+        Example:
+            # Get median (50th percentile) forecast history
+            forecasts = await client.get_event_forecast_percentile_history(
+                series_ticker="PRES",
+                event_ticker="EVENT-TICKER",
+                percentiles=[5000],  # 50th percentile
+                start_ts=start,
+                end_ts=end,
+                period_interval=60
+            )
+        """
+        if len(percentiles) > 10:
+            raise ValueError("Maximum 10 percentile values allowed")
+        for p in percentiles:
+            if not 0 <= p <= 10000:
+                raise ValueError(f"Percentile {p} out of range (0-10000)")
+
+        params = {
+            "percentiles": ",".join(str(p) for p in percentiles),
+            "start_ts": start_ts,
+            "end_ts": end_ts,
+            "period_interval": period_interval
+        }
+
+        return await self._make_authenticated_request(
+            "GET",
+            f"/trade-api/v2/series/{series_ticker}/events/{event_ticker}/forecast_percentile_history",
+            params=params,
+            require_auth=True
+        )
+
+    async def get_live_data(
+        self,
+        data_type: str,
+        milestone_id: str
+    ) -> Dict[str, Any]:
+        """
+        Get live data for a specific milestone.
+
+        Per Kalshi API: Returns real-time data for milestones.
+
+        Args:
+            data_type: Type of live data
+            milestone_id: Milestone ID
+
+        Returns:
+            Dict with:
+            - live_data: Object containing:
+                - type: Data type
+                - details: Type-specific details
+                - milestone_id: Milestone ID
+
+        Example:
+            live_data = await client.get_live_data(
+                data_type="election",
+                milestone_id="milestone-123"
+            )
+        """
+        return await self._make_authenticated_request(
+            "GET",
+            f"/trade-api/v2/live_data/{data_type}/milestone/{milestone_id}",
+            require_auth=False
+        )
+
+    async def get_multiple_live_data(
+        self,
+        milestone_ids: List[str]
+    ) -> Dict[str, Any]:
+        """
+        Get live data for multiple milestones.
+
+        Per Kalshi API: Batch endpoint for retrieving multiple live data objects.
+
+        Args:
+            milestone_ids: Array of milestone IDs (max 100)
+
+        Returns:
+            Dict with:
+            - live_datas: Array of live data objects
+
+        Example:
+            live_data = await client.get_multiple_live_data(
+                milestone_ids=["milestone-1", "milestone-2", "milestone-3"]
+            )
+        """
+        if len(milestone_ids) > 100:
+            raise ValueError("Maximum 100 milestone IDs allowed")
+
+        params = {
+            "milestone_ids": milestone_ids
+        }
+
+        return await self._make_authenticated_request(
+            "GET",
+            "/trade-api/v2/live_data/batch",
+            params=params,
+            require_auth=False
+        )
+
     async def place_order(
         self,
         ticker: str,
@@ -908,33 +1418,6 @@ class KalshiClient(TradingLoggerMixin):
         """Cancel an order."""
         return await self._make_authenticated_request(
             "DELETE", f"/trade-api/v2/portfolio/orders/{order_id}"
-        )
-    
-    async def get_trades(
-        self,
-        ticker: Optional[str] = None,
-        limit: int = 100,
-        cursor: Optional[str] = None
-    ) -> Dict[str, Any]:
-        """
-        Get trade history.
-        
-        Args:
-            ticker: Filter by ticker
-            limit: Maximum number of trades to return
-            cursor: Pagination cursor
-        
-        Returns:
-            Trades data
-        """
-        params = {"limit": limit}
-        if ticker:
-            params["ticker"] = ticker
-        if cursor:
-            params["cursor"] = cursor
-        
-        return await self._make_authenticated_request(
-            "GET", "/trade-api/v2/portfolio/trades", params=params
         )
     
     async def place_smart_limit_order(
@@ -1680,32 +2163,52 @@ class KalshiClient(TradingLoggerMixin):
 
     async def get_series(
         self,
+        category: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        include_product_metadata: bool = False,
+        include_volume: bool = False,
         limit: int = 100,
-        cursor: Optional[str] = None,
-        tags: Optional[List[str]] = None
+        cursor: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        List all series (market categories).
+        List all series (market categories/templates).
 
-        Per Kalshi API: Series group related markets together.
+        Per Kalshi API: Series represent templates for recurring events
+        (e.g., "Monthly Jobs Report", "Weekly Initial Jobless Claims").
 
         Args:
-            limit: Maximum number of series to return
-            cursor: Pagination cursor
+            category: Filter by category
             tags: Filter by tags (e.g., ["Politics", "Sports"])
+            include_product_metadata: Include product metadata (default false)
+            include_volume: Include total volume traded (default false)
+            limit: Maximum number of series to return (default 100)
+            cursor: Pagination cursor
 
         Returns:
-            Series list
+            Dict with:
+            - series: Array of series objects
 
         Example:
-            series = await client.get_series(tags=["Politics"])
+            # Get politics series with volume data
+            series = await client.get_series(
+                category="Politics",
+                include_volume=True
+            )
         """
-        params = {"limit": limit}
+        params = {}
+        if category:
+            params["category"] = category
+        if tags:
+            # Per Oct 13, 2025 fix: tags are comma-separated
+            params["tags"] = ",".join(tags)
+        if include_product_metadata:
+            params["include_product_metadata"] = "true"
+        if include_volume:
+            params["include_volume"] = "true"
+        if limit:
+            params["limit"] = limit
         if cursor:
             params["cursor"] = cursor
-        if tags:
-            # Per Oct 13, 2025 fix: tags are comma-separated, not space-separated
-            params["tags"] = ",".join(tags)
 
         return await self._make_authenticated_request(
             "GET",
@@ -2068,6 +2571,386 @@ class KalshiClient(TradingLoggerMixin):
                 break
 
         return all_series
+
+    # ============================================================================
+    # INCENTIVE PROGRAMS (API Part 6)
+    # ============================================================================
+
+    async def get_incentive_programs(
+        self,
+        status: Optional[str] = None,
+        incentive_type: Optional[str] = None,
+        limit: int = 100,
+        cursor: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        List incentive programs (rewards for trading activity).
+
+        Per Kalshi API: Incentives are rewards programs for trading activity
+        on specific markets.
+
+        Args:
+            status: Filter by status (all, active, upcoming, closed, paid_out)
+                   Default: all
+            incentive_type: Filter by type (all, liquidity, volume)
+                          Default: all
+            limit: Number of results per page (1-10000, default 100)
+            cursor: Pagination cursor
+
+        Returns:
+            Dict with:
+            - incentive_programs: Array of incentive objects with:
+                - id: Program identifier
+                - market_ticker: Associated market
+                - incentive_type: Type (liquidity/volume)
+                - start_date, end_date: Program duration
+                - period_reward: Reward amount
+                - paid_out: Whether rewards have been distributed
+                - discount_factor_bps: Discount factor in basis points
+                - target_size: Target size for program
+            - next_cursor: Pagination cursor
+
+        Example:
+            # Get active liquidity incentive programs
+            programs = await client.get_incentive_programs(
+                status="active",
+                incentive_type="liquidity"
+            )
+        """
+        params = {}
+        if status:
+            params["status"] = status
+        if incentive_type:
+            params["type"] = incentive_type
+        if limit:
+            params["limit"] = limit
+        if cursor:
+            params["cursor"] = cursor
+
+        return await self._make_authenticated_request(
+            "GET",
+            "/trade-api/v2/incentive_programs",
+            params=params,
+            require_auth=False
+        )
+
+    # ============================================================================
+    # FCM ENDPOINTS (API Part 6) - FCM Members Only
+    # ============================================================================
+
+    async def get_fcm_orders(
+        self,
+        subtrader_id: str,
+        cursor: Optional[str] = None,
+        event_ticker: Optional[str] = None,
+        ticker: Optional[str] = None,
+        min_ts: Optional[int] = None,
+        max_ts: Optional[int] = None,
+        status: Optional[str] = None,
+        limit: int = 100
+    ) -> Dict[str, Any]:
+        """
+        Get orders filtered by subtrader ID (FCM members only).
+
+        Per Kalshi API: Requires FCM member access level.
+
+        Args:
+            subtrader_id: Specific subtrader ID (required for FCM members)
+            cursor: Pagination cursor
+            event_ticker: Filter by event ticker (comma-separated, max 10)
+            ticker: Filter by market ticker
+            min_ts: Filter orders after this Unix timestamp
+            max_ts: Filter orders before this Unix timestamp
+            status: Filter by status (resting, canceled, executed)
+            limit: Number of results per page (1-1000, default 100)
+
+        Returns:
+            Dict with:
+            - orders: Array of order objects
+            - cursor: Pagination cursor
+
+        Example:
+            # Get orders for a subtrader
+            orders = await client.get_fcm_orders(
+                subtrader_id="subtrader-123",
+                status="resting"
+            )
+
+        Note:
+            This endpoint is only available to FCM members.
+        """
+        params = {"subtrader_id": subtrader_id}
+        if cursor:
+            params["cursor"] = cursor
+        if event_ticker:
+            params["event_ticker"] = event_ticker
+        if ticker:
+            params["ticker"] = ticker
+        if min_ts:
+            params["min_ts"] = min_ts
+        if max_ts:
+            params["max_ts"] = max_ts
+        if status:
+            params["status"] = status
+        if limit:
+            params["limit"] = limit
+
+        return await self._make_authenticated_request(
+            "GET",
+            "/trade-api/v2/fcm/orders",
+            params=params,
+            require_auth=True
+        )
+
+    async def get_fcm_positions(
+        self,
+        subtrader_id: str,
+        ticker: Optional[str] = None,
+        event_ticker: Optional[str] = None,
+        count_filter: Optional[str] = None,
+        settlement_status: Optional[str] = None,
+        limit: int = 100,
+        cursor: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Get positions filtered by subtrader ID (FCM members only).
+
+        Per Kalshi API: Requires FCM member access level.
+
+        Args:
+            subtrader_id: Specific subtrader ID (required for FCM members)
+            ticker: Filter by market ticker
+            event_ticker: Filter by event ticker
+            count_filter: Restrict to positions with non-zero values (comma-separated)
+            settlement_status: Filter by settlement status (all, unsettled, settled)
+                             Default: unsettled
+            limit: Number of results per page (1-1000, default 100)
+            cursor: Pagination cursor
+
+        Returns:
+            Dict with:
+            - market_positions: Array of market-level positions
+            - event_positions: Array of event-level positions
+            - cursor: Pagination cursor
+
+        Example:
+            # Get positions for a subtrader
+            positions = await client.get_fcm_positions(
+                subtrader_id="subtrader-123",
+                settlement_status="unsettled"
+            )
+
+        Note:
+            This endpoint is only available to FCM members.
+        """
+        params = {"subtrader_id": subtrader_id}
+        if ticker:
+            params["ticker"] = ticker
+        if event_ticker:
+            params["event_ticker"] = event_ticker
+        if count_filter:
+            params["count_filter"] = count_filter
+        if settlement_status:
+            params["settlement_status"] = settlement_status
+        if limit:
+            params["limit"] = limit
+        if cursor:
+            params["cursor"] = cursor
+
+        return await self._make_authenticated_request(
+            "GET",
+            "/trade-api/v2/fcm/positions",
+            params=params,
+            require_auth=True
+        )
+
+    # ============================================================================
+    # STRUCTURED TARGETS (API Part 6)
+    # ============================================================================
+
+    async def get_structured_targets(
+        self,
+        target_type: Optional[str] = None,
+        competition: Optional[str] = None,
+        page_size: int = 100,
+        cursor: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        List structured targets with filtering.
+
+        Per Kalshi API: Structured targets represent structured data for events.
+
+        Args:
+            target_type: Filter by structured target type
+            competition: Filter by competition
+            page_size: Number of items per page (1-2000, default 100)
+            cursor: Pagination cursor
+
+        Returns:
+            Dict with:
+            - structured_targets: Array of structured target objects with:
+                - id: Target identifier
+                - name: Target name
+                - type: Target type
+                - details: Type-specific details object
+                - source_id: Source identifier
+                - last_updated_ts: Last update timestamp
+            - cursor: Pagination cursor
+
+        Example:
+            # Get structured targets for a competition
+            targets = await client.get_structured_targets(
+                competition="NFL",
+                page_size=50
+            )
+        """
+        params = {"page_size": page_size}
+        if target_type:
+            params["type"] = target_type
+        if competition:
+            params["competition"] = competition
+        if cursor:
+            params["cursor"] = cursor
+
+        return await self._make_authenticated_request(
+            "GET",
+            "/trade-api/v2/structured_targets",
+            params=params,
+            require_auth=False
+        )
+
+    async def get_structured_target(
+        self,
+        structured_target_id: str
+    ) -> Dict[str, Any]:
+        """
+        Get a specific structured target by ID.
+
+        Per Kalshi API: Returns detailed information about a structured target.
+
+        Args:
+            structured_target_id: Structured target ID
+
+        Returns:
+            Dict with:
+            - structured_target: Structured target object
+
+        Example:
+            target = await client.get_structured_target("target-123")
+            print(f"Target: {target['structured_target']['name']}")
+        """
+        return await self._make_authenticated_request(
+            "GET",
+            f"/trade-api/v2/structured_targets/{structured_target_id}",
+            require_auth=False
+        )
+
+    # ============================================================================
+    # MILESTONES (API Part 6)
+    # ============================================================================
+
+    async def get_milestone(
+        self,
+        milestone_id: str
+    ) -> Dict[str, Any]:
+        """
+        Get a specific milestone by ID.
+
+        Per Kalshi API: Returns detailed information about a milestone.
+
+        Args:
+            milestone_id: Milestone ID
+
+        Returns:
+            Dict with:
+            - milestone: Milestone object with:
+                - id: Milestone identifier
+                - category: Milestone category
+                - type: Milestone type
+                - start_date: Start date (RFC3339)
+                - end_date: End date (RFC3339, nullable)
+                - related_event_tickers: Array of related event tickers
+                - primary_event_tickers: Array of primary event tickers
+                - title: Milestone title
+                - notification_message: Notification message
+                - details: Type-specific details object
+                - source_id: Source identifier
+                - last_updated_ts: Last update timestamp
+
+        Example:
+            milestone = await client.get_milestone("milestone-123")
+            print(f"Milestone: {milestone['milestone']['title']}")
+        """
+        return await self._make_authenticated_request(
+            "GET",
+            f"/trade-api/v2/milestones/{milestone_id}",
+            require_auth=False
+        )
+
+    async def get_milestones(
+        self,
+        limit: int,
+        minimum_start_date: Optional[str] = None,
+        category: Optional[str] = None,
+        competition: Optional[str] = None,
+        source_id: Optional[str] = None,
+        milestone_type: Optional[str] = None,
+        related_event_ticker: Optional[str] = None,
+        cursor: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        List milestones with filtering and pagination.
+
+        Per Kalshi API: Milestones represent significant events or dates.
+
+        Args:
+            limit: Number of results per page (1-500, required)
+            minimum_start_date: Minimum start date filter (RFC3339 timestamp)
+            category: Filter by milestone category
+            competition: Filter by competition
+            source_id: Filter by source ID
+            milestone_type: Filter by milestone type
+            related_event_ticker: Filter by related event ticker
+            cursor: Pagination cursor
+
+        Returns:
+            Dict with:
+            - milestones: Array of milestone objects
+            - cursor: Pagination cursor
+
+        Example:
+            # Get upcoming election milestones
+            milestones = await client.get_milestones(
+                limit=50,
+                category="election",
+                minimum_start_date="2024-01-01T00:00:00Z"
+            )
+        """
+        if not 1 <= limit <= 500:
+            raise ValueError("limit must be between 1 and 500")
+
+        params = {"limit": limit}
+        if minimum_start_date:
+            params["minimum_start_date"] = minimum_start_date
+        if category:
+            params["category"] = category
+        if competition:
+            params["competition"] = competition
+        if source_id:
+            params["source_id"] = source_id
+        if milestone_type:
+            params["type"] = milestone_type
+        if related_event_ticker:
+            params["related_event_ticker"] = related_event_ticker
+        if cursor:
+            params["cursor"] = cursor
+
+        return await self._make_authenticated_request(
+            "GET",
+            "/trade-api/v2/milestones",
+            params=params,
+            require_auth=False
+        )
 
     async def close(self) -> None:
         """Close the HTTP client."""

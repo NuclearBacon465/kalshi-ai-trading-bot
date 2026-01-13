@@ -37,9 +37,50 @@ async def test_execute_position_places_live_order():
     test_position.id = position_id  # Set the ID on the position object
 
     # Create a mock KalshiClient
-    from unittest.mock import Mock
+    from unittest.mock import Mock, MagicMock
     mock_kalshi_client = Mock()
-    mock_kalshi_client.place_order = AsyncMock(return_value={"order": {"order_id": "test-order-123"}})
+
+    # Track the last client_order_id used in place_order
+    last_order_id = ["test-order-123"]
+
+    async def mock_place_order_impl(**kwargs):
+        last_order_id[0] = kwargs.get('client_order_id', 'test-order-123')
+        return {"order": {"order_id": last_order_id[0]}}
+
+    async def mock_get_fills_impl(**kwargs):
+        # Return fills for the most recent order
+        return {
+            "fills": [
+                {
+                    "client_order_id": last_order_id[0],
+                    "count": 10,
+                    "price": 60,
+                    "side": "yes"
+                }
+            ]
+        }
+
+    # Wrap in AsyncMock to preserve call tracking
+    mock_kalshi_client.place_order = AsyncMock(side_effect=mock_place_order_impl)
+    mock_kalshi_client.get_orderbook = AsyncMock(return_value={
+        "orderbook": {
+            "yes": {
+                "bids": [{"price": 59, "quantity": 100}, {"price": 58, "quantity": 50}],
+                "asks": [{"price": 60, "quantity": 100}, {"price": 61, "quantity": 50}]
+            },
+            "no": {
+                "bids": [{"price": 40, "quantity": 100}, {"price": 39, "quantity": 50}],
+                "asks": [{"price": 41, "quantity": 100}, {"price": 42, "quantity": 50}]
+            }
+        }
+    })
+    mock_kalshi_client.get_market = AsyncMock(return_value={
+        "market": {
+            "yes_price": 60,
+            "no_price": 40
+        }
+    })
+    mock_kalshi_client.get_fills = AsyncMock(side_effect=mock_get_fills_impl)
     mock_kalshi_client.close = AsyncMock()
 
     try:

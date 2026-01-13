@@ -116,6 +116,10 @@ class OrderBookAnalyzer:
 
             side_book = book[side_key]
 
+            # Handle None side_book (market with no orders on this side)
+            if side_book is None:
+                return None
+
             # Parse bids and asks (bids = buy orders, asks = sell orders)
             bids = side_book.get('bids', [])  # People buying YES/NO
             asks = side_book.get('asks', [])  # People selling YES/NO
