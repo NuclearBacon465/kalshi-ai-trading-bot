@@ -205,3 +205,8 @@ dashboard_*.json
 api_keys.txt
 credentials.json
 secrets.yaml trading_system.db-journal
+
+# Runtime state files
+trading_state.json
+health_state.json
+*.state.json
