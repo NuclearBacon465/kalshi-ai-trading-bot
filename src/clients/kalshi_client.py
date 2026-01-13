@@ -1365,33 +1365,6 @@ class KalshiClient(TradingLoggerMixin):
             "DELETE", f"/trade-api/v2/portfolio/orders/{order_id}"
         )
     
-    async def get_trades(
-        self,
-        ticker: Optional[str] = None,
-        limit: int = 100,
-        cursor: Optional[str] = None
-    ) -> Dict[str, Any]:
-        """
-        Get trade history.
-        
-        Args:
-            ticker: Filter by ticker
-            limit: Maximum number of trades to return
-            cursor: Pagination cursor
-        
-        Returns:
-            Trades data
-        """
-        params = {"limit": limit}
-        if ticker:
-            params["ticker"] = ticker
-        if cursor:
-            params["cursor"] = cursor
-        
-        return await self._make_authenticated_request(
-            "GET", "/trade-api/v2/portfolio/trades", params=params
-        )
-    
     async def place_smart_limit_order(
         self,
         ticker: str,
