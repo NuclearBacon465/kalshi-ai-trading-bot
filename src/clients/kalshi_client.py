@@ -2834,7 +2834,7 @@ class KalshiClient(TradingLoggerMixin):
 
     async def get_milestones(
         self,
-        limit: int,
+        limit: int = 100,
         minimum_start_date: Optional[str] = None,
         category: Optional[str] = None,
         competition: Optional[str] = None,
@@ -2849,7 +2849,7 @@ class KalshiClient(TradingLoggerMixin):
         Per Kalshi API: Milestones represent significant events or dates.
 
         Args:
-            limit: Number of results per page (1-500, required)
+            limit: Number of results per page (1-500, default 100)
             minimum_start_date: Minimum start date filter (RFC3339 timestamp)
             category: Filter by milestone category
             competition: Filter by competition
@@ -3076,14 +3076,17 @@ class KalshiClient(TradingLoggerMixin):
         """
         Get list of quotes.
 
+        **IMPORTANT:** At least one of quote_creator_user_id or rfq_creator_user_id
+        must be provided. The API will return 403 error if neither is provided.
+
         Args:
             limit: Number of results per page (1-500, default 500)
             cursor: Pagination cursor
             event_ticker: Filter by event ticker (comma-separated, max 10)
             market_ticker: Filter by market ticker
             status: Filter by status (e.g., "open", "accepted", "confirmed")
-            quote_creator_user_id: Filter by quote creator user ID
-            rfq_creator_user_id: Filter by RFQ creator user ID
+            quote_creator_user_id: Filter by quote creator user ID (REQUIRED if rfq_creator_user_id not provided)
+            rfq_creator_user_id: Filter by RFQ creator user ID (REQUIRED if quote_creator_user_id not provided)
             rfq_creator_subtrader_id: Filter by RFQ creator subtrader (FCM only)
             rfq_id: Filter by RFQ ID
 
@@ -3093,7 +3096,12 @@ class KalshiClient(TradingLoggerMixin):
             - cursor: Pagination cursor for next page
 
         Example:
-            quotes = await client.get_quotes(status="open", limit=100)
+            # Get quotes created by current user
+            quotes = await client.get_quotes(
+                quote_creator_user_id="user-123",
+                status="open",
+                limit=100
+            )
             for quote in quotes['quotes']:
                 print(f"{quote['market_ticker']}: YES bid ${quote['yes_bid_dollars']}")
         """
