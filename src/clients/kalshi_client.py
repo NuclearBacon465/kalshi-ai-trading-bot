@@ -1468,7 +1468,7 @@ class KalshiClient(TradingLoggerMixin):
         total_count: int,
         chunk_size: int = 5,
         delay_seconds: float = 2.0
-    ) -> list:
+    ) -> List[Dict[str, Any]]:
         """
         Place large order in smaller chunks to reduce market impact.
 
