@@ -61,6 +61,11 @@ class KalshiWebSocketClient:
         # Subscribed tickers
         self.subscribed_tickers = set()
 
+        # Subscription ID (sid) tracking - CRITICAL for unsubscribe/update
+        # Maps: channel -> {sid, market_tickers, seq}
+        self.subscriptions = {}  # sid -> {channel, market_tickers}
+        self.channel_to_sid = {}  # (channel, ticker) -> sid
+
         # Connection management
         self.reconnect_delay = 1  # Start with 1 second
         self.max_reconnect_delay = 60  # Max 60 seconds
@@ -72,6 +77,9 @@ class KalshiWebSocketClient:
 
         # Message ID tracking for WebSocket commands (per Quick Start docs)
         self._message_id = 1
+
+        # Sequence number tracking for delta consistency
+        self.sequence_numbers = {}  # sid -> last_seq
 
     async def connect(self):
         """
@@ -358,37 +366,124 @@ class KalshiWebSocketClient:
             self.logger.error(f"Failed to list subscriptions: {e}")
             return False
 
-    async def unsubscribe(self, channels: list, tickers: Optional[list] = None):
+    async def unsubscribe(self, sids: list):
         """
-        Unsubscribe from one or more channels.
+        Unsubscribe from one or more subscriptions using their subscription IDs.
+
+        **IMPORTANT:** Per Kalshi WebSocket docs, unsubscribe uses subscription IDs (sids),
+        NOT channel names. Use list_subscriptions() to see active subscription IDs.
 
         Args:
-            channels: List of channel names to unsubscribe from
-            tickers: Optional list of market tickers to remove
+            sids: List of subscription IDs (sid) to cancel
+
+        Example:
+            # Unsubscribe from subscriptions with sids 1 and 2
+            await ws.unsubscribe([1, 2])
+
+            # Get sids first
+            subs = await ws.list_subscriptions()  # Returns list with 'sid' fields
+            await ws.unsubscribe([sub['sid'] for sub in subs])
         """
         if not self.is_connected:
             self.logger.warning("Cannot unsubscribe: WebSocket not connected")
             return False
 
+        if not sids:
+            self.logger.warning("No subscription IDs provided")
+            return False
+
         try:
+            # Per Kalshi WebSocket docs: {"id": 124, "cmd": "unsubscribe", "params": {"sids": [1, 2]}}
             message = {
                 "id": self._message_id,
                 "cmd": "unsubscribe",
                 "params": {
-                    "channels": channels
+                    "sids": sids
                 }
             }
             self._message_id += 1
 
-            if tickers:
-                message["params"]["market_tickers"] = tickers
-
             await self.websocket.send(json.dumps(message))
-            self.logger.info(f"🚫 Unsubscribed from: {', '.join(channels)}")
+            self.logger.info(f"🚫 Unsubscribing from sids: {sids}")
             return True
 
         except Exception as e:
             self.logger.error(f"Failed to unsubscribe: {e}")
+            return False
+
+    async def update_subscription(
+        self,
+        sid: int,
+        market_tickers: list,
+        action: str = "add_markets",
+        send_initial_snapshot: bool = False
+    ):
+        """
+        Update an existing subscription by adding or removing markets.
+
+        More efficient than unsubscribe + resubscribe for modifying market lists.
+
+        Args:
+            sid: Subscription ID to update
+            market_tickers: List of market tickers to add or remove
+            action: "add_markets" or "delete_markets"
+            send_initial_snapshot: If true, receive initial snapshot for newly added markets (ticker channel only)
+
+        Returns:
+            bool: True if request sent successfully
+
+        Example:
+            # Add markets to existing subscription
+            await ws.update_subscription(
+                sid=456,
+                market_tickers=["NEW-MARKET-1", "NEW-MARKET-2"],
+                action="add_markets"
+            )
+
+            # Remove markets from subscription
+            await ws.update_subscription(
+                sid=456,
+                market_tickers=["OLD-MARKET-1"],
+                action="delete_markets"
+            )
+        """
+        if not self.is_connected:
+            self.logger.warning("Cannot update subscription: WebSocket not connected")
+            return False
+
+        if action not in ["add_markets", "delete_markets"]:
+            raise ValueError("action must be 'add_markets' or 'delete_markets'")
+
+        if not market_tickers:
+            self.logger.warning("No market tickers provided for update")
+            return False
+
+        try:
+            # Per Kalshi WebSocket docs, can use 'sid' or 'sids' (array)
+            # Using 'sid' for single subscription update
+            message = {
+                "id": self._message_id,
+                "cmd": "update_subscription",
+                "params": {
+                    "sid": sid,
+                    "market_tickers": market_tickers,
+                    "action": action
+                }
+            }
+            self._message_id += 1
+
+            if send_initial_snapshot:
+                message["params"]["send_initial_snapshot"] = True
+
+            await self.websocket.send(json.dumps(message))
+            self.logger.info(
+                f"🔄 Updating subscription {sid}: {action} "
+                f"{len(market_tickers)} markets"
+            )
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Failed to update subscription: {e}")
             return False
 
     async def _resubscribe_all(self):
@@ -420,10 +515,20 @@ class KalshiWebSocketClient:
         try:
             msg_type = message.get('type')
             channel = message.get('channel')
+            sid = message.get('sid')
+            seq = message.get('seq')
+
+            # Track sequence numbers for delta consistency
+            if sid and seq:
+                last_seq = self.sequence_numbers.get(sid, 0)
+                if seq != last_seq + 1 and last_seq > 0:
+                    self.logger.warning(
+                        f"Sequence gap detected for sid={sid}: expected {last_seq + 1}, got {seq}"
+                    )
+                self.sequence_numbers[sid] = seq
 
             if msg_type == 'error':
-                # Per Kalshi Quick Start docs, error format is:
-                # {"id": 123, "type": "error", "msg": {"code": 6, "msg": "Params required"}}
+                # Per Kalshi WebSocket docs: {"id": 123, "type": "error", "msg": {"code": 6, "msg": "..."}}
                 msg_id = message.get('id', 'unknown')
                 error_data = message.get('msg', {})
                 error_code = error_data.get('code', 'unknown')
@@ -435,10 +540,41 @@ class KalshiWebSocketClient:
                 return
 
             if msg_type == 'subscribed':
-                self.logger.info(f"✅ Subscription confirmed: {channel}")
+                # Store subscription ID (sid) for later unsubscribe/update
+                # Response format: {"id": 1, "type": "subscribed", "msg": {"channel": "ticker", "sid": 1}}
+                msg_data = message.get('msg', {})
+                sid = msg_data.get('sid')
+                channel = msg_data.get('channel')
+
+                if sid and channel:
+                    self.subscriptions[sid] = {
+                        'channel': channel,
+                        'market_tickers': []  # Will be populated from subscribe params
+                    }
+                    self.logger.info(f"✅ Subscription confirmed: {channel} (sid={sid})")
+                else:
+                    self.logger.info(f"✅ Subscription confirmed: {channel}")
                 return
 
-            # Route to appropriate callbacks
+            if msg_type == 'unsubscribed':
+                # Response format: {"sid": 2, "type": "unsubscribed"}
+                if sid:
+                    if sid in self.subscriptions:
+                        del self.subscriptions[sid]
+                    if sid in self.sequence_numbers:
+                        del self.sequence_numbers[sid]
+                    self.logger.info(f"✅ Unsubscribed from sid={sid}")
+                return
+
+            if msg_type == 'ok':
+                # Update subscription response: {"id": 123, "sid": 456, "seq": 222, "type": "ok", "market_tickers": [...]}
+                market_tickers = message.get('market_tickers', [])
+                if sid and sid in self.subscriptions:
+                    self.subscriptions[sid]['market_tickers'] = market_tickers
+                self.logger.info(f"✅ Subscription updated (sid={sid}): {len(market_tickers)} markets")
+                return
+
+            # Route data messages to appropriate callbacks
             if channel in self.callbacks:
                 data = message.get('data', message)
 
