@@ -576,7 +576,9 @@ class KalshiWebSocketClient:
 
             # Route data messages to appropriate callbacks
             if channel in self.callbacks:
-                data = message.get('data', message)
+                # Per Kalshi WebSocket docs, message payload is in 'msg' field
+                # (orderbook_snapshot, orderbook_delta, ticker, fill, etc. all use 'msg')
+                data = message.get('msg', message.get('data', message))
 
                 for callback in self.callbacks[channel]:
                     try:
