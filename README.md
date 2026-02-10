@@ -78,11 +78,17 @@ The authors are not responsible for any financial losses incurred through the us
    ```
 
 4. **Configure environment variables**
-   Create a `.env` file in the root directory:
+   Copy the template and update values in `.env`:
+   ```bash
+   cp env.template .env
+   ```
+   Then edit `.env` with your keys:
    ```bash
    KALSHI_API_KEY=your_kalshi_api_key
+   KALSHI_PRIVATE_KEY_FILE=kalshi_private_key
    XAI_API_KEY=your_xai_api_key
    ```
+   Place your private key at `kalshi_private_key` (PEM format). If you prefer inline PEM, set `KALSHI_PRIVATE_KEY` in `.env` instead.
 
 5. **Initialize the database**
    ```bash

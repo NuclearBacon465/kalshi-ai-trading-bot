@@ -17,6 +17,23 @@ class APIConfig:
     """API configuration settings."""
     kalshi_api_key: str = field(default_factory=lambda: os.getenv("KALSHI_API_KEY", ""))
     kalshi_base_url: str = "https://api.elections.kalshi.com"  # Updated to new API endpoint
+    kalshi_ws_url: str = field(
+        default_factory=lambda: os.getenv(
+            "KALSHI_WS_URL",
+            "wss://api.elections.kalshi.com/trade-api/ws/v2"
+        )
+    )
+    kalshi_ws_signing_path: str = field(
+        default_factory=lambda: os.getenv(
+            "KALSHI_WS_SIGNING_PATH",
+            "/trade-api/ws/v2"
+        )
+    )
+    kalshi_private_key_path: str = field(
+        default_factory=lambda: os.getenv("KALSHI_PRIVATE_KEY_FILE", "")
+    )
+    kalshi_private_key_pem: str = field(default_factory=lambda: os.getenv("KALSHI_PRIVATE_KEY", ""))
+    kalshi_private_key_b64: str = field(default_factory=lambda: os.getenv("KALSHI_PRIVATE_KEY_B64", ""))
     openai_api_key: str = field(default_factory=lambda: os.getenv("OPENAI_API_KEY", ""))
     xai_api_key: str = field(default_factory=lambda: os.getenv("XAI_API_KEY", ""))
     openai_base_url: str = "https://api.openai.com/v1"
@@ -236,7 +253,7 @@ class Settings:
             raise ValueError("KALSHI_API_KEY environment variable is required")
         
         if not self.api.xai_api_key:
-            raise ValueError("XAI_API_KEY environment variable is required")
+            print("Configuration warning: XAI_API_KEY not set; AI features will be unavailable.")
         
         if self.trading.max_position_size_pct <= 0 or self.trading.max_position_size_pct > 100:
             raise ValueError("max_position_size_pct must be between 0 and 100")

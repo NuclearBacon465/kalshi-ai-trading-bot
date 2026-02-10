@@ -442,7 +442,7 @@ source venv/bin/activate
 pip install -r requirements.txt
 
 # 6. Configure API keys
-cp .env.example .env
+cp env.template .env
 nano .env  # Add your API keys
 
 # 7. Run system check
@@ -472,7 +472,7 @@ python -m venv venv
 pip install -r requirements.txt
 
 # 5. Configure .env file
-copy .env.example .env
+copy env.template .env
 notepad .env  # Add your API keys
 
 # 6. Run system check
@@ -497,7 +497,7 @@ source venv/bin/activate
 pip install -r requirements.txt
 
 # 3. Configure and run
-cp .env.example .env
+cp env.template .env
 nano .env  # Add API keys
 python system_check.py --detailed
 python beast_mode_bot.py
